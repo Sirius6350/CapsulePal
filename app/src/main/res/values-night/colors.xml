@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 桌面组件：深色 -->
+    <color name="widget_card">#211F1D</color>
+    <color name="widget_line">#35312D</color>
+    <color name="widget_ink">#F3EEE7</color>
+    <color name="widget_ink_soft">#B5ABA1</color>
+    <color name="widget_accent">#FF9C85</color>
+    <color name="widget_accent_soft">#6D2A1B</color>
+    <color name="widget_track">#2A2724</color>
+    <color name="widget_on_accent">#4A1208</color>
+</resources>

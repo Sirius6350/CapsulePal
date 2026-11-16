@@ -1,0 +1,122 @@
+####################################################################
+# 胶囊伙伴（CapsulePal）—— 开源仓库忽略规则
+# 原则：密钥、本地配置、构建产物、IDE 状态一律不进 Git。
+# 若某个文件本应被提交却被此处误伤，用 `git check-ignore -v <路径>` 排查。
+####################################################################
+
+# ------------------------------------------------------------------
+# 1. 签名与密钥（最高优先级：一旦入库即视为泄露，必须换密钥）
+# ------------------------------------------------------------------
+keystore/
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pem
+*.key
+*.crt
+*.cer
+*.der
+*.bks
+keystore.properties
+signing.properties
+secrets.properties
+*.gpg
+*.asc
+
+# ------------------------------------------------------------------
+# 2. 本地环境配置（含本机绝对路径、SDK 目录）
+# ------------------------------------------------------------------
+local.properties
+local.*.properties
+.env
+.env.*
+*.env.local
+
+# ------------------------------------------------------------------
+# 3. 构建产物与缓存（双仓分离：APK 只走 GitHub Releases）
+# ------------------------------------------------------------------
+.gradle/
+build/
+app/build/
+*/build/
+.gradle-cache/
+.kotlin/
+.kotlin-cache/
+.cxx/
+.externalNativeBuild/
+*.apk
+*.aab
+*.apks
+*.ap_
+*.dex
+*.class
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+*.hprof
+*.prof
+mapping.txt
+release/
+app/release/
+output.json
+output-metadata.json
+lint-results*.html
+lint-results*.xml
+reports/
+captures/
+build-scan*
+out/
+
+# ------------------------------------------------------------------
+# 4. IDE / 编辑器状态
+# ------------------------------------------------------------------
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.trae/
+.cursor/
+.fleet/
+*.hprof
+local_history/
+
+# ------------------------------------------------------------------
+# 5. 系统与临时文件
+# ------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*.swo
+*~
+*.tmp
+*.bak
+*.orig
+*.rej
+*.log
+hs_err_pid*
+crash-*.txt
+
+# ------------------------------------------------------------------
+# 6. 对话记录 / 笔记 / 草稿（禁止把协作过程与截图混入仓库）
+# ------------------------------------------------------------------
+chat*.txt
+Chat*.txt
+conversation*.md
+*.chat.md
+*.draft.md
+notes/
+drafts/
+uploads/
+.uploads/
+
+# ------------------------------------------------------------------
+# 7. 明确保留（防止被上面的通配符误伤）
+# ------------------------------------------------------------------
+!README.md
+!BRANDING.md
+!LICENSE
+!CHANGELOG.md
+!gradle.properties
+!app/schemas/**/*.json

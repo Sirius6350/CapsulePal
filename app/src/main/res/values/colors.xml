@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="ic_launcher_background">#F6E7D8</color>
+    <color name="background_light">#FAF8F4</color>
+    <color name="background_dark">#141312</color>
+
+    <!-- 桌面组件：浅色 -->
+    <color name="widget_card">#FFFDF9</color>
+    <color name="widget_line">#EDE4D8</color>
+    <color name="widget_ink">#2B2724</color>
+    <color name="widget_ink_soft">#746B62</color>
+    <color name="widget_accent">#E8735A</color>
+    <color name="widget_accent_soft">#FFE3DB</color>
+    <color name="widget_track">#F0E7DB</color>
+    <color name="widget_on_accent">#FFFFFF</color>
+</resources>

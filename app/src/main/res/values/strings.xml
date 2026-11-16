@@ -1,0 +1,26 @@
+<resources>
+    <string name="app_name">胶囊伙伴</string>
+
+    <string name="keep_alive_channel_name">持续守护</string>
+    <string name="keep_alive_channel_desc">保持胶囊伙伴在后台陪伴，仅降低被系统回收的概率</string>
+    <string name="task_live_channel_name">当前这件事</string>
+    <string name="task_live_channel_desc">在灵动岛/流体云上显示当前任务的准备与进行状态</string>
+    <string name="task_fallback_channel_name">任务提醒</string>
+    <string name="task_fallback_channel_desc">当设备不支持实况通知时，用高优先级通知提醒当前任务</string>
+    <string name="task_reminder_channel_name">双重提醒</string>
+    <string name="task_reminder_channel_desc">开启双重提醒后，在上岛之外再发一条普通通知</string>
+    <string name="reminder_live_channel_name">主动提醒</string>
+    <string name="reminder_live_channel_desc">根据充电、耳机、WiFi、通话和日历等信号，在灵动岛/流体云上提示下一件事</string>
+    <string name="system_channel_name">伙伴提示</string>
+    <string name="system_channel_desc">权限、保活与上岛状态提醒</string>
+
+    <!-- 桌面组件 -->
+    <string name="widget_metric_label">电量与温度</string>
+    <string name="widget_metric_desc">电量百分比环、电池温度与今日充电次数</string>
+    <string name="widget_todo_label">今日待办</string>
+    <string name="widget_todo_desc">今日完成进度，以及离当前时间最近的待办</string>
+    <string name="widget_instant_label">即时待办入口</string>
+    <string name="widget_instant_desc">点一下就能记一件事，创建后立刻上岛</string>
+    <string name="widget_instant_capture_title">即时待办</string>
+    <string name="widget_instant_capture_hint">例如：马上回个电话</string>
+</resources>
