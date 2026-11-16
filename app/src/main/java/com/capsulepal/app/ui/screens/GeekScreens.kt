@@ -557,7 +557,7 @@ fun GeekPowerScreen(state: MonitorState?, vm: CapsuleViewModel) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(Modifier.height(12.dp))
-                val items = geek.appPowerToday.take(6)
+                val items = geek.appPowerToday
                 if (items.isEmpty()) {
                     val context = LocalContext.current
                     val granted = UsageAccess.granted(context)
