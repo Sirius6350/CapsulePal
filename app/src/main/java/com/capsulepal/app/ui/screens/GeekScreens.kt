@@ -410,12 +410,13 @@ fun GeekPowerScreen(state: MonitorState?, vm: CapsuleViewModel) {
     val charging = reading?.charging == true || reading?.plugged == true
     val livePowerW = BatteryCalc.chargePowerW(reading?.voltageMv, reading?.currentMa)
     val estimate = estimateDischarge(
-        samples = geek.timeline,
-        capacityMah = state?.ratedCapacityMah ?: 0,
+        charges = geek.charges,
+        discharges = geek.discharges,
+        levelPct = reading?.levelPct,
         nowMillis = System.currentTimeMillis(),
-        fallbackPowerW = if (charging) null else livePowerW
+        charging = charging,
+        livePowerW = livePowerW
     )
-    val rate = estimate?.ratePctPerHour
     val level = reading?.levelPct
 
     LazyColumn(
@@ -498,19 +499,27 @@ fun GeekPowerScreen(state: MonitorState?, vm: CapsuleViewModel) {
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    text = "按最近放电采样与电池容量推算",
+                    text = if (estimate?.reference == true) {
+                        "充电中，按上一次完整放电推算"
+                    } else {
+                        "按本次放电时长与电量差推算"
+                    },
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(Modifier.height(10.dp))
-                if (rate == null || level == null) {
+                if (estimate == null || level == null) {
                     Text(
-                        text = "数据还不够。保持放电使用一段时间后，这里会给出 %/h 与预计可用时长。",
+                        text = if (charging) {
+                            "充电中。完成一次 10 分钟以上、掉电 1% 的放电后，这里会给出参考值。"
+                        } else {
+                            "本次放电满 10 分钟且掉电 1% 后，这里会给出 %/h 与预计可用时长。"
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 } else {
-                    val hoursLeft = (level / rate).coerceIn(0f, 400f)
+                    val hoursLeft = (level / estimate.ratePctPerHour).coerceIn(0f, 400f)
                     Text(
                         text = formatHours(hoursLeft),
                         style = MaterialTheme.typography.displayMedium.copy(
@@ -519,17 +528,22 @@ fun GeekPowerScreen(state: MonitorState?, vm: CapsuleViewModel) {
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
-                        text = "预计可用时长",
+                        text = if (estimate.reference) "按上次放电速率折算" else "预计可用时长",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(Modifier.height(10.dp))
-                    GeekStatRow(label = "掉电速度", value = String.format(Locale.CHINA, "%.1f%%/h", rate))
                     GeekStatRow(
-                        label = "平均放电功率",
-                        value = estimate?.avgPowerW
-                            ?.let { BatteryCalc.formatPower(it) }
-                            ?: "--"
+                        label = if (estimate.reference) "上次掉电速度" else "掉电速度",
+                        value = String.format(Locale.CHINA, "%.1f%%/h", estimate.ratePctPerHour)
+                    )
+                    GeekStatRow(
+                        label = if (estimate.reference) "上次放电时长" else "已放电",
+                        value = formatDuration(estimate.elapsedMillis)
+                    )
+                    GeekStatRow(
+                        label = "放电功率（仅供观察）",
+                        value = estimate.powerW?.let { BatteryCalc.formatPower(it) } ?: "--"
                     )
                 }
             }
@@ -1391,50 +1405,108 @@ private fun List<Float>.downsample(maxPoints: Int = 120): List<Float> {
     }
 }
 
-/** 电池标称电压与默认容量：容量取自设置，未知时按 5000mAh 兜底。 */
-private const val BATTERY_NOMINAL_VOLTAGE = 3.85f
-private const val DEFAULT_RATED_CAPACITY_MAH = 5000
+/** 一次放电推算结果；reference = true 表示充电中，取的是上一次完整放电。 */
+private data class DischargeEstimate(
+    val ratePctPerHour: Float,
+    val elapsedMillis: Long,
+    val powerW: Float?,
+    val reference: Boolean
+)
 
-private data class DischargeEstimate(val ratePctPerHour: Float, val avgPowerW: Float)
+/** 门槛：放电满 10 分钟且至少掉 1%，否则整数百分比的量化误差会主导结果。 */
+private const val MIN_DISCHARGE_MILLIS = 10 * 60_000L
+private const val MIN_DROP_PCT = 1
 
 /**
- * 用近期放电采样的平均功率反推掉电速度（% / 小时）。
+ * 掉电速度 = 掉电百分比 / 放电时长，续航 = 剩余电量 / 掉电速度。
  *
- * 不再用充放电会话的「电量百分比差 / 时长」：整数百分比在短会话里只有 1~2 个刻度，
- * 量化误差会把 7%/h 算成 1.5%/h。功率采样的信噪比高得多，也能和当前功率互相印证。
- * 采样不足时退回当前瞬时功率；仍没有则返回 null，由界面提示数据不够。
+ * 放电起点优先取「上一次充电结束」的时刻与电量：放电会话只在 App 运行时才开始记录，
+ * 拔电到进程起来之间可能已隔一段时间，充电会话结束时的电量更贴近真实起点。
+ * 没有充电记录时退回尚未结束的放电会话；充电中则拿上一次完整放电当参考值。
+ * 放电功率只展示，不参与任何计算。
  */
 private fun estimateDischarge(
-    samples: List<BatterySampleEntity>,
-    capacityMah: Int,
+    charges: List<ChargeSessionEntity>,
+    discharges: List<DischargeSessionEntity>,
+    levelPct: Int?,
     nowMillis: Long,
-    fallbackPowerW: Float?
+    charging: Boolean,
+    livePowerW: Float?
 ): DischargeEstimate? {
-    val capacity = capacityMah.takeIf { it > 0 } ?: DEFAULT_RATED_CAPACITY_MAH
-    // 每 1% 电量对应的能量（Wh）。
-    val whPerPct = capacity / 100f / 1000f * BATTERY_NOMINAL_VOLTAGE
-    if (whPerPct <= 0f) return null
+    val level = levelPct ?: return null
 
-    fun wrap(powerW: Float): DischargeEstimate? =
-        if (powerW > 0.05f) DischargeEstimate(powerW / whPerPct, powerW) else null
-
-    // 优先最近 30 分钟；样本不足再放宽到 6 小时。
-    for (window in longArrayOf(30 * 60_000L, 6 * 3_600_000L)) {
-        val recent = samples.filter { it.ts >= nowMillis - window && it.powerW < -0.05f }
-        if (recent.size < 5) continue
-        var weight = 0.0
-        var sum = 0.0
-        for (index in 1 until recent.size) {
-            // 采样间隔加权，避免高低频采样混在一起时把均值带偏。
-            val dt = (recent[index].ts - recent[index - 1].ts).coerceIn(0L, 180_000L)
-            if (dt <= 0L) continue
-            val power = -recent[index].powerW
-            weight += dt.toDouble()
-            sum += power.toDouble() * dt
-        }
-        if (weight > 0.0) wrap((sum / weight).toFloat())?.let { return it }
+    if (charging) {
+        // 当前电量在回升，公式不成立，只能给上一次完整放电的参考值。
+        val last = discharges
+            .filter { it.endTs > it.startTs }
+            .maxByOrNull { it.endTs }
+            ?: return null
+        return buildRate(
+            startMillis = last.startTs,
+            endMillis = last.endTs,
+            startPct = last.startPct,
+            endPct = last.endPct,
+            powerW = last.avgPowerW,
+            reference = true
+        )
     }
-    return fallbackPowerW?.let { wrap(it) }
+
+    val lastCharge = charges
+        .filter { it.endTs > it.startTs }
+        .maxByOrNull { it.endTs }
+    val openDischarge = discharges
+        .filter { it.endTs == 0L && it.startTs <= nowMillis }
+        .maxByOrNull { it.startTs }
+
+    val startMillis: Long
+    val startPct: Int
+    if (lastCharge != null && (openDischarge == null || lastCharge.endTs >= openDischarge.startTs)) {
+        startMillis = lastCharge.endTs
+        startPct = lastCharge.endPct
+    } else if (openDischarge != null) {
+        startMillis = openDischarge.startTs
+        startPct = openDischarge.startPct
+    } else {
+        return null
+    }
+
+    return buildRate(
+        startMillis = startMillis,
+        endMillis = nowMillis,
+        startPct = startPct,
+        endPct = level,
+        powerW = livePowerW,
+        reference = false
+    )
+}
+
+private fun buildRate(
+    startMillis: Long,
+    endMillis: Long,
+    startPct: Int,
+    endPct: Int,
+    powerW: Float?,
+    reference: Boolean
+): DischargeEstimate? {
+    val elapsed = endMillis - startMillis
+    val drop = startPct - endPct
+    if (elapsed < MIN_DISCHARGE_MILLIS || drop < MIN_DROP_PCT) return null
+    val rate = drop / (elapsed / 3_600_000f)
+    if (rate <= 0f) return null
+    return DischargeEstimate(
+        ratePctPerHour = rate,
+        elapsedMillis = elapsed,
+        powerW = powerW?.takeIf { it > 0f },
+        reference = reference
+    )
+}
+
+private fun formatDuration(millis: Long): String {
+    val totalMinutes = (millis / 60_000L).toInt()
+    return when {
+        totalMinutes < 60 -> "$totalMinutes 分"
+        else -> "${totalMinutes / 60} 小时 ${totalMinutes % 60} 分"
+    }
 }
 
 private fun formatHours(hours: Float): String {
