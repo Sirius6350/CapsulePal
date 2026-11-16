@@ -46,6 +46,38 @@ abstract class TaskDao {
     @Query("UPDATE tasks SET planId = :planId WHERE id = :id")
     abstract suspend fun assignPlan(id: Long, planId: Long)
 
+    /** 整条重复系列一起改归属，避免编辑后计划里只剩一条实例。 */
+    @Query("UPDATE tasks SET planId = :planId WHERE seriesId = :seriesId")
+    abstract suspend fun assignPlanToSeries(seriesId: Long, planId: Long)
+
+    @Query("SELECT COUNT(*) FROM tasks WHERE seriesId = :seriesId")
+    abstract suspend fun countSeriesMembers(seriesId: Long): Int
+
+    /**
+     * 旧数据修复：按待办签名（标题、开始时间、重复规则、重复星期、日期最接近）
+     * 找到同系列成员所属的 seriesId。此前编辑重复待办会把 seriesId 写成 0，
+     * 被拆出来的实例靠这里重新认亲。
+     */
+    @Query(
+        "SELECT seriesId FROM tasks WHERE seriesId != 0 AND id != :excludeId " +
+            "AND title = :title AND startMinute = :startMinute " +
+            "AND repeatRule = :repeatRule AND repeatDays = :repeatDays " +
+            "ORDER BY ABS(epochDay - :epochDay) ASC LIMIT 1"
+    )
+    abstract suspend fun findSeriesIdBySignature(
+        title: String,
+        startMinute: Int,
+        repeatRule: String,
+        repeatDays: String,
+        epochDay: Long,
+        excludeId: Long
+    ): Long?
+
+    /** 旧数据修复：seriesId 为 0 但仍带重复规则的待办（被拆散的系列成员）。 */
+    @Transaction
+    @Query("SELECT * FROM tasks WHERE seriesId = 0 AND repeatRule != 'ONCE'")
+    abstract suspend fun orphanRepeats(): List<TaskWithSteps>
+
     @Transaction
     @Query("SELECT * FROM tasks ORDER BY epochDay ASC, startMinute ASC")
     abstract suspend fun getAll(): List<TaskWithSteps>

@@ -18,17 +18,29 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -45,6 +57,7 @@ import com.capsulepal.app.ui.components.CapsuleButton
 import com.capsulepal.app.ui.components.SoftCard
 import com.capsulepal.app.ui.components.bounceClick
 import com.capsulepal.app.ui.theme.Coral
+import kotlinx.coroutines.delay
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.YearMonth
@@ -61,6 +74,7 @@ fun ScheduleScreen(
     onBack: () -> Unit,
     showBack: Boolean = true
 ) {
+    var showMonthPicker by remember { mutableStateOf(false) }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 110.dp),
@@ -107,7 +121,8 @@ fun ScheduleScreen(
                     month = state.month,
                     onPrev = { onChangeMonth(-1) },
                     onNext = { onChangeMonth(1) },
-                    onToday = onGoToday
+                    onToday = onGoToday,
+                    onPickMonth = { showMonthPicker = true }
                 )
                 Spacer(Modifier.height(10.dp))
                 WeekdayHeader()
@@ -196,6 +211,17 @@ fun ScheduleScreen(
             }
         }
     }
+
+    if (showMonthPicker) {
+        MonthInputDialog(
+            initial = state.month,
+            onDismiss = { showMonthPicker = false },
+            onConfirm = { year, month ->
+                showMonthPicker = false
+                onSelectDate(LocalDate.of(year, month, 1))
+            }
+        )
+    }
 }
 
 @Composable
@@ -203,14 +229,19 @@ private fun MonthHeader(
     month: YearMonth,
     onPrev: () -> Unit,
     onNext: () -> Unit,
-    onToday: () -> Unit
+    onToday: () -> Unit,
+    onPickMonth: () -> Unit
 ) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(
             text = "${month.year} 年 ${month.monthValue} 月",
             style = MaterialTheme.typography.titleLarge,
             color = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.weight(1f)
+            modifier = Modifier
+                .weight(1f)
+                .clip(RoundedCornerShape(10.dp))
+                .bounceClick(onClick = onPickMonth)
+                .padding(vertical = 2.dp)
         )
         NavButton(text = "‹", onClick = onPrev)
         Spacer(Modifier.width(4.dp))
@@ -226,6 +257,67 @@ private fun MonthHeader(
                 .padding(horizontal = 10.dp, vertical = 6.dp)
         )
     }
+}
+
+@Composable
+private fun MonthInputDialog(
+    initial: YearMonth,
+    onDismiss: () -> Unit,
+    onConfirm: (Int, Int) -> Unit
+) {
+    var yearText by remember { mutableStateOf(initial.year.toString()) }
+    var monthText by remember { mutableStateOf(initial.monthValue.toString()) }
+    val monthFocus = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+
+    // 弹窗挂载后再抢焦点，否则 requestFocus 会落空，键盘也不会自动抬起。
+    LaunchedEffect(Unit) {
+        delay(150)
+        monthFocus.requestFocus()
+        keyboard?.show()
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("跳转到月份") },
+        text = {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedTextField(
+                    value = yearText,
+                    onValueChange = { yearText = it.filter(Char::isDigit).take(4) },
+                    singleLine = true,
+                    label = { Text("年") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.weight(1f)
+                )
+                OutlinedTextField(
+                    value = monthText,
+                    onValueChange = { monthText = it.filter(Char::isDigit).take(2) },
+                    singleLine = true,
+                    label = { Text("月") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier
+                        .weight(0.7f)
+                        .focusRequester(monthFocus)
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    val year = yearText.toIntOrNull()
+                    val month = monthText.toIntOrNull()
+                    if (year != null && year in 1900..2200 && month != null && month in 1..12) {
+                        onConfirm(year, month)
+                    }
+                }
+            ) { Text("确定") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
+    )
 }
 
 @Composable

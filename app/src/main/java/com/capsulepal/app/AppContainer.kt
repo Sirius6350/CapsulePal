@@ -160,6 +160,8 @@ class AppContainer(context: Context) {
             instantTodoNotifier.cancel()
             taskRepository.seedTemplatesIfEmpty()
             val settings = settingsRepository.settings.first()
+            // 旧版本编辑重复待办会把 seriesId 写成 0：启动时先把系列关系修回来，再补未来实例。
+            taskRepository.repairSeriesLinks()
             taskRepository.ensureSeriesHorizon(include = { settings.version.isTaskVisible(it) })
             partnerRepository.ensureCompanionSince()
             syncRuntimeMetrics(settings)

@@ -10,6 +10,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -66,6 +67,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.capsulepal.app.R
@@ -144,6 +146,10 @@ fun TodayScreen(
     )
     val monitor by vm.monitor.collectAsStateWithLifecycle()
     val todo by vm.todoState.collectAsStateWithLifecycle()
+    val plansState by vm.plansState.collectAsStateWithLifecycle()
+    val planTitles = remember(plansState) {
+        plansState?.plans?.associate { it.plan.id to it.plan.title }.orEmpty()
+    }
     val instantTodo by vm.instantTodo.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var showInstantDialog by remember { mutableStateOf(false) }
@@ -231,6 +237,7 @@ fun TodayScreen(
                             tasks = state.tasks,
                             nowMillis = state.nowMillis,
                             highlightTaskId = highlightTaskId,
+                            planTitles = planTitles,
                             onEdit = onEditTask,
                             onToggle = vm::toggle,
                             onRestore = vm::restore,
@@ -248,6 +255,7 @@ fun TodayScreen(
                         onGroup = vm::setTodoGroupFilter,
                         onCategory = vm::setTodoCategoryFilter,
                         onPriority = vm::setTodoPriorityFilter,
+                        onPlan = vm::setTodoPlanFilter,
                         onLayout = vm::setTodoLayout,
                         onManageGroups = { showGroupManager = true }
                     )
@@ -256,6 +264,7 @@ fun TodayScreen(
                     filter.groupFilter == -1L &&
                     filter.categoryFilter == null &&
                     filter.priorityFilter == null &&
+                    filter.planFilter == null &&
                     filter.layout == TodoLayout.LIST
                 if (filter.tasks.isEmpty()) {
                     item {
@@ -274,6 +283,7 @@ fun TodayScreen(
                             tasks = filter.tasks,
                             nowMillis = state.nowMillis,
                             highlightTaskId = highlightTaskId,
+                            planTitles = planTitles,
                             onEdit = onEditTask,
                             onToggle = vm::toggle,
                             onRestore = vm::restore,
@@ -304,6 +314,7 @@ fun TodayScreen(
                                 item(key = "grid-${pair.first().id}") {
                                     TodoGridRow(
                                         tasks = pair,
+                                        planTitles = planTitles,
                                         onEdit = onEditTask,
                                         onToggle = vm::toggle,
                                         onRestore = vm::restore,
@@ -321,6 +332,7 @@ fun TodayScreen(
                                         TaskRow(
                                             task = task,
                                             highlighted = task.id == highlightTaskId,
+                                            planTitles = planTitles,
                                             onClick = { onEditTask(task) },
                                             onToggle = { vm.toggle(task) },
                                             onRestore = { vm.restore(task) },
@@ -1085,6 +1097,7 @@ private fun TimelineCard(
     tasks: List<Task>,
     nowMillis: Long,
     highlightTaskId: Long?,
+    planTitles: Map<Long, String>,
     onEdit: (Task) -> Unit,
     onToggle: (Task) -> Unit,
     onRestore: (Task) -> Unit,
@@ -1103,6 +1116,7 @@ private fun TimelineCard(
             TaskRow(
                 task = task,
                 highlighted = task.id == highlightTaskId,
+                planTitles = planTitles,
                 onClick = { onEdit(task) },
                 onToggle = { onToggle(task) },
                 onRestore = { onRestore(task) },
@@ -1151,6 +1165,7 @@ private fun NowMarker(nowMillis: Long) {
 private fun TaskRow(
     task: Task,
     highlighted: Boolean,
+    planTitles: Map<Long, String>,
     onClick: () -> Unit,
     onToggle: () -> Unit,
     onRestore: () -> Unit,
@@ -1159,11 +1174,7 @@ private fun TaskRow(
     val done = task.status == TaskStatus.COMPLETED
     val skipped = task.status == TaskStatus.SKIPPED
     val finished = done || skipped
-    val titleColor = if (finished) {
-        MaterialTheme.colorScheme.onSurfaceVariant
-    } else {
-        MaterialTheme.colorScheme.onSurface
-    }
+    val titleColor = priorityTitleColor(task.priority, finished)
     val categoryColor = categoryColor(task.category)
     // 新增待办后短暂高亮，让用户确认它落在时间线的哪个位置。
     val highlightColor by animateColorAsState(
@@ -1223,8 +1234,6 @@ private fun TaskRow(
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                PriorityTag(task.priority)
-                Spacer(Modifier.width(6.dp))
                 SourceTag(task)
                 Text(
                     text = task.title,
@@ -1237,6 +1246,11 @@ private fun TaskRow(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f)
                 )
+                val planName = planTitles[task.planId]
+                if (planName != null) {
+                    Spacer(Modifier.width(6.dp))
+                    PlanNameLabel(planName)
+                }
             }
             Spacer(Modifier.height(2.dp))
             Text(
@@ -1374,7 +1388,7 @@ private fun rememberNow(intervalMillis: Long): Long {
     return now
 }
 
-private enum class FilterSection { RANGE, GROUP, CATEGORY, PRIORITY }
+private enum class FilterSection { RANGE, GROUP, CATEGORY, PRIORITY, PLAN }
 
 private data class FilterOption(
     val label: String,
@@ -1392,6 +1406,7 @@ private fun TodoFilterBar(
     onGroup: (Long) -> Unit,
     onCategory: (TaskCategory?) -> Unit,
     onPriority: (Priority?) -> Unit,
+    onPlan: (Long?) -> Unit,
     onLayout: (TodoLayout) -> Unit,
     onManageGroups: () -> Unit
 ) {
@@ -1411,6 +1426,7 @@ private fun TodoFilterBar(
     }
     val categoryLabel = todo.categoryFilter?.label ?: "分类"
     val priorityLabel = todo.priorityFilter?.label ?: "重要程度"
+    val planLabel = todo.plans.firstOrNull { it.id == todo.planFilter }?.title ?: "计划"
 
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -1434,6 +1450,9 @@ private fun TodoFilterBar(
             }
             FilterButton(priorityLabel, todo.priorityFilter != null) {
                 openSection = FilterSection.PRIORITY
+            }
+            FilterButton(planLabel, todo.planFilter != null) {
+                openSection = FilterSection.PLAN
             }
         }
         ViewModeToggle(todo.layout) {
@@ -1541,6 +1560,27 @@ private fun TodoFilterBar(
                     add(
                         FilterOption(priority.label, todo.priorityFilter == priority) {
                             onPriority(priority)
+                            openSection = null
+                        }
+                    )
+                }
+            },
+            onDismiss = { openSection = null }
+        )
+
+        FilterSection.PLAN -> FilterDialog(
+            title = "计划",
+            options = buildList {
+                add(
+                    FilterOption("全部计划", todo.planFilter == null) {
+                        onPlan(null)
+                        openSection = null
+                    }
+                )
+                todo.plans.forEach { plan ->
+                    add(
+                        FilterOption(plan.title, todo.planFilter == plan.id) {
+                            onPlan(plan.id)
                             openSection = null
                         }
                     )
@@ -1772,6 +1812,7 @@ private fun TodoDayHeader(date: LocalDate, today: LocalDate) {
 @Composable
 private fun TodoGridRow(
     tasks: List<Task>,
+    planTitles: Map<Long, String>,
     onEdit: (Task) -> Unit,
     onToggle: (Task) -> Unit,
     onRestore: (Task) -> Unit,
@@ -1784,6 +1825,7 @@ private fun TodoGridRow(
         tasks.forEach { task ->
             TaskGridCard(
                 task = task,
+                planTitles = planTitles,
                 modifier = Modifier.weight(1f),
                 onEdit = { onEdit(task) },
                 onToggle = { onToggle(task) },
@@ -1798,6 +1840,7 @@ private fun TodoGridRow(
 @Composable
 private fun TaskGridCard(
     task: Task,
+    planTitles: Map<Long, String>,
     modifier: Modifier = Modifier,
     onEdit: () -> Unit,
     onToggle: () -> Unit,
@@ -1835,9 +1878,17 @@ private fun TaskGridCard(
                     )
                 }
                 Spacer(Modifier.width(6.dp))
-                PriorityTag(task.priority)
                 SourceTag(task)
-                Spacer(Modifier.weight(1f))
+                // 计划名跟在分类图标右侧，只占剩余空间，时间与标题都不受影响。
+                val planName = planTitles[task.planId]
+                if (planName != null) {
+                    Spacer(Modifier.width(6.dp))
+                    Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                        PlanNameLabel(name = planName, maxWidth = null)
+                    }
+                } else {
+                    Spacer(Modifier.weight(1f))
+                }
                 TaskStatusToggle(
                     status = task.status,
                     onToggle = onToggle,
@@ -1847,7 +1898,7 @@ private fun TaskGridCard(
             Text(
                 text = task.title,
                 style = MaterialTheme.typography.bodyMedium,
-                color = if (finished) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+                color = priorityTitleColor(task.priority, finished),
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
                 textDecoration = if (done) TextDecoration.LineThrough else null
@@ -1855,7 +1906,8 @@ private fun TaskGridCard(
             Text(
                 text = "${TimeUtils.formatClock(task.startTime)}–${TimeUtils.formatClock(endTime)}",
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1
             )
             Text(
                 text = if (task.prepareMinutes > 0) {
@@ -1871,34 +1923,44 @@ private fun TaskGridCard(
     }
 }
 
-/** 待办名称前的重要程度标签。 */
+/** 待办名称后的计划名称，过长时省略；宫格里空间更窄，单独收窄。 */
 @Composable
-private fun PriorityTag(priority: Priority) {
-    val background = when (priority) {
-        Priority.HIGH -> Coral.copy(alpha = 0.16f)
-        Priority.NORMAL -> Mint.copy(alpha = 0.22f)
-        Priority.LOW -> MaterialTheme.colorScheme.surfaceVariant
-    }
-    val content = when (priority) {
-        Priority.HIGH -> CoralDeep
-        Priority.NORMAL -> MaterialTheme.colorScheme.onSurface
-        Priority.LOW -> MaterialTheme.colorScheme.onSurfaceVariant
-    }
+private fun PlanNameLabel(
+    name: String,
+    modifier: Modifier = Modifier,
+    maxWidth: Dp? = 96.dp
+) {
     Text(
-        text = priority.label,
+        text = name,
         style = MaterialTheme.typography.labelSmall,
-        color = content,
+        color = MaterialTheme.colorScheme.onSurface,
         maxLines = 1,
-        modifier = Modifier
+        overflow = TextOverflow.Ellipsis,
+        modifier = modifier
+            .then(if (maxWidth != null) Modifier.widthIn(max = maxWidth) else Modifier)
             .clip(RoundedCornerShape(6.dp))
-            .background(background)
+            .background(Lavender.copy(alpha = 0.22f))
             .padding(horizontal = 6.dp, vertical = 2.dp)
     )
 }
 
 /**
+ * 重要程度语义色：固定红/绿，不跟随各版主题换色，保证任何版本下三档都能区分。
+ */
+@Composable
+private fun priorityTitleColor(priority: Priority, finished: Boolean): Color {
+    if (finished) return MaterialTheme.colorScheme.onSurfaceVariant
+    val dark = isSystemInDarkTheme()
+    return when (priority) {
+        Priority.HIGH -> if (dark) Color(0xFFFF9080) else Color(0xFFD6503F)
+        Priority.LOW -> if (dark) Color(0xFF74D2AA) else Color(0xFF2F8F68)
+        Priority.NORMAL -> MaterialTheme.colorScheme.onSurface
+    }
+}
+
+/**
  * 三类待办共用一个时间线，用来源标签明确区分：
- * 计划待办、日程待办、普通待办（普通待办不显示标签）。
+ * 日程待办、普通待办（普通待办不显示标签）；计划名称直接跟在标题后面。
  */
 @Composable
 private fun SourceTag(task: Task) {
@@ -1906,11 +1968,6 @@ private fun SourceTag(task: Task) {
     val background: Color
     val content: Color
     when {
-        task.planId != 0L -> {
-            label = "计划"
-            background = Lavender.copy(alpha = 0.22f)
-            content = MaterialTheme.colorScheme.onSurface
-        }
         task.kind == TaskKind.SCHEDULE -> {
             label = "日程"
             background = Coral.copy(alpha = 0.16f)

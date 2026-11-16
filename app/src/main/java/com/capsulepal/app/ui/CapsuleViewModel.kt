@@ -90,7 +90,10 @@ data class TodoUiState(
     val groupFilter: Long,
     val categoryFilter: TaskCategory?,
     val priorityFilter: Priority?,
-    /** 已按分组排序、再按开始时间排序，且应用了分组/分类/重要程度筛选。 */
+    /** 计划筛选：null = 全部计划。 */
+    val planFilter: Long? = null,
+    val plans: List<Plan> = emptyList(),
+    /** 已按分组排序、再按开始时间排序，且应用了分组/分类/重要程度/计划筛选。 */
     val tasks: List<Task>
 ) {
     val rangeDays: Int
@@ -307,6 +310,7 @@ class CapsuleViewModel(application: Application) : AndroidViewModel(application)
     private val _todoGroupFilter = MutableStateFlow(-1L)
     private val _todoCategoryFilter = MutableStateFlow<TaskCategory?>(null)
     private val _todoPriorityFilter = MutableStateFlow<Priority?>(null)
+    private val _todoPlanFilter = MutableStateFlow<Long?>(null)
 
     private data class TodoSpec(
         val range: TodoRange,
@@ -314,7 +318,8 @@ class CapsuleViewModel(application: Application) : AndroidViewModel(application)
         val settings: AppSettings,
         val groupFilter: Long,
         val categoryFilter: TaskCategory?,
-        val priorityFilter: Priority?
+        val priorityFilter: Priority?,
+        val planFilter: Long? = null
     )
 
     /**
@@ -334,6 +339,8 @@ class CapsuleViewModel(application: Application) : AndroidViewModel(application)
         _todoPriorityFilter
     ) { spec, priorityFilter ->
         spec.copy(priorityFilter = priorityFilter)
+    }.combine(_todoPlanFilter) { spec, planFilter ->
+        spec.copy(planFilter = planFilter)
     }.flatMapLatest { spec ->
         val start = if (spec.range == TodoRange.TOMORROW) {
             spec.today.plusDays(1)
@@ -348,8 +355,9 @@ class CapsuleViewModel(application: Application) : AndroidViewModel(application)
         }
         combine(
             container.taskRepository.observeTasksBetween(start, start.plusDays(days - 1)),
-            container.taskRepository.observeGroups()
-        ) { tasks, groups ->
+            container.taskRepository.observeGroups(),
+            container.planRepository.observePlans()
+        ) { tasks, groups, plans ->
             val order = groups.withIndex().associate { (index, group) -> group.id to index }
             val filtered = tasks.filter { task ->
                 // 次日隐藏：早于今天且已完成/已跳过的待办不再出现在待办页，数据仍保留。
@@ -359,7 +367,8 @@ class CapsuleViewModel(application: Application) : AndroidViewModel(application)
                 val groupOk = spec.groupFilter == -1L || task.groupId == spec.groupFilter
                 val categoryOk = spec.categoryFilter == null || task.category == spec.categoryFilter
                 val priorityOk = spec.priorityFilter == null || task.priority == spec.priorityFilter
-                !finishedYesterday && groupOk && categoryOk && priorityOk
+                val planOk = spec.planFilter == null || task.planId == spec.planFilter
+                !finishedYesterday && groupOk && categoryOk && priorityOk && planOk
             }.sortedWith(
                 compareBy(
                     { order[it.groupId] ?: Int.MAX_VALUE },
@@ -376,6 +385,8 @@ class CapsuleViewModel(application: Application) : AndroidViewModel(application)
                 groupFilter = spec.groupFilter,
                 categoryFilter = spec.categoryFilter,
                 priorityFilter = spec.priorityFilter,
+                plans = plans,
+                planFilter = spec.planFilter,
                 tasks = filtered
             )
         }
@@ -402,6 +413,10 @@ class CapsuleViewModel(application: Application) : AndroidViewModel(application)
 
     fun setTodoPriorityFilter(priority: Priority?) {
         _todoPriorityFilter.value = priority
+    }
+
+    fun setTodoPlanFilter(planId: Long?) {
+        _todoPlanFilter.value = planId
     }
 
     fun setTodoLayout(layout: com.capsulepal.app.data.model.TodoLayout) {

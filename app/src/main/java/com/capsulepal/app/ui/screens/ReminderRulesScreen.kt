@@ -10,6 +10,7 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.Indication
 import androidx.compose.foundation.IndicationNodeFactory
@@ -58,6 +59,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -237,6 +239,7 @@ fun ReminderRulesScreen(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ReminderRuleList(
     settings: AppSettings,
@@ -250,6 +253,10 @@ private fun ReminderRuleList(
     onRequestPermission: (ReminderTriggerType) -> Unit
 ) {
     val context = LocalContext.current
+    // 长按进入多选，选中后统一删除，避免逐条进编辑页。
+    var selectionMode by remember { mutableStateOf(false) }
+    val selectedIds = remember { mutableStateListOf<Long>() }
+    var confirmDelete by remember { mutableStateOf(false) }
     Surface(
         modifier = Modifier.fillMaxSize(),
         color = MaterialTheme.colorScheme.background
@@ -262,20 +269,46 @@ private fun ReminderRuleList(
             contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            item {
+            // 顶栏做成吸顶头，滚到列表底部时「取消 / 删除」仍在原位，不用滚回顶部。
+            stickyHeader {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.background)
                         .padding(top = 10.dp, bottom = 4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     TopBarPill(text = "返回", onClick = onBack)
                     Spacer(Modifier.weight(1f))
-                    Pill(
-                        text = "${settings.reminderRules.count { it.enabled && (allowTaskLink || it.action == ReminderActionType.CUSTOM) }} 条生效",
-                        color = MintSoft,
-                        contentColor = Mint
-                    )
+                    if (selectionMode) {
+                        TextButton(
+                            onClick = {
+                                selectionMode = false
+                                selectedIds.clear()
+                            }
+                        ) {
+                            Text("取消", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        TextButton(
+                            enabled = selectedIds.isNotEmpty(),
+                            onClick = { confirmDelete = true }
+                        ) {
+                            Text(
+                                text = "删除 ${selectedIds.size}",
+                                color = if (selectedIds.isEmpty()) {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                } else {
+                                    Coral
+                                }
+                            )
+                        }
+                    } else {
+                        Pill(
+                            text = "${settings.reminderRules.count { it.enabled && (allowTaskLink || it.action == ReminderActionType.CUSTOM) }} 条生效",
+                            color = MintSoft,
+                            contentColor = Mint
+                        )
+                    }
                 }
             }
             item {
@@ -333,7 +366,19 @@ private fun ReminderRuleList(
                     missingPermission = missingPermission(rule, permissions),
                     linkedTaskMissing = rule.action == ReminderActionType.LINKED_TASK &&
                         linkedTasks.none { it.id == rule.linkedTaskId },
-                    onClick = { onEdit(rule) },
+                    selectionMode = selectionMode,
+                    selected = selectedIds.contains(rule.id),
+                    onLongClick = {
+                        selectionMode = true
+                        if (!selectedIds.contains(rule.id)) selectedIds.add(rule.id)
+                    },
+                    onClick = {
+                        if (selectionMode) {
+                            if (!selectedIds.remove(rule.id)) selectedIds.add(rule.id)
+                        } else {
+                            onEdit(rule)
+                        }
+                    },
                     onToggle = if (muted) {
                         null
                     } else {
@@ -396,6 +441,29 @@ private fun ReminderRuleList(
                 )
             }
         }
+    }
+
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("删除主动提醒") },
+            text = { Text("将删除选中的 ${selectedIds.size} 条规则，删除后无法恢复。") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        selectedIds.forEach { vm.deleteReminderRule(it) }
+                        selectedIds.clear()
+                        selectionMode = false
+                        confirmDelete = false
+                    }
+                ) {
+                    Text("删除", color = Coral)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDelete = false }) { Text("取消") }
+            }
+        )
     }
 }
 
@@ -827,15 +895,19 @@ private fun RuleCard(
     missingPermission: String?,
     linkedTaskMissing: Boolean,
     muted: Boolean = false,
+    selectionMode: Boolean = false,
+    selected: Boolean = false,
+    onLongClick: () -> Unit = {},
     onClick: () -> Unit,
     onToggle: ((Boolean) -> Unit)?
 ) {
     SoftCard(
         modifier = Modifier
-            .alpha(if (muted) 0.55f else 1f)
+            .alpha(if (muted && !selectionMode) 0.55f else 1f)
             .bounceClick(
                 shape = RoundedCornerShape(26.dp),
-                onClick = onClick
+                onClick = onClick,
+                onLongClick = onLongClick
             )
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -870,13 +942,13 @@ private fun RuleCard(
                 )
             }
             Spacer(Modifier.width(6.dp))
-            if (onToggle != null) {
-                ElasticSwitch(
+            when {
+                selectionMode -> SelectionMark(selected)
+                onToggle != null -> ElasticSwitch(
                     checked = rule.enabled,
                     onCheckedChange = onToggle
                 )
-            } else {
-                Pill(
+                else -> Pill(
                     text = "不触发",
                     color = MaterialTheme.colorScheme.surfaceVariant,
                     contentColor = MaterialTheme.colorScheme.onSurfaceVariant
@@ -913,6 +985,23 @@ private fun RuleCard(
                 style = MaterialTheme.typography.labelSmall,
                 color = Coral
             )
+        }
+    }
+}
+
+@Composable
+private fun SelectionMark(selected: Boolean) {
+    Box(
+        modifier = Modifier
+            .size(24.dp)
+            .background(
+                color = if (selected) Coral else MaterialTheme.colorScheme.surfaceVariant,
+                shape = CircleShape
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        if (selected) {
+            Text(text = "✓", style = MaterialTheme.typography.labelMedium, color = Color.White)
         }
     }
 }

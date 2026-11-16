@@ -44,7 +44,7 @@ class SettingsRepository(context: Context) {
                 onboardingDone = prefs[Keys.ONBOARDING_DONE] ?: false,
                 exactAlarmAsked = prefs[Keys.EXACT_ALARM_ASKED] ?: false,
                 reminderRules = ReminderRuleCodec.decode(prefs[Keys.REMINDER_RULES])
-                    ?: ReminderRules.defaults(),
+                    ?: emptyList(),
                 reminderCooldownMinutes = (prefs[Keys.REMINDER_COOLDOWN] ?: 30)
                     .coerceIn(0, 24 * 60),
                 quietHoursEnabled = prefs[Keys.QUIET_ENABLED] ?: false,

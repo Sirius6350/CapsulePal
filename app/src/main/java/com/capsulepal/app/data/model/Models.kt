@@ -286,8 +286,8 @@ data class AppSettings(
     val overlayAlphaPercent: Int = 80,
     val onboardingDone: Boolean = false,
     val exactAlarmAsked: Boolean = false,
-    /** 用户自定义的主动提醒规则。 */
-    val reminderRules: List<ReminderRule> = ReminderRules.defaults(),
+    /** 用户自定义的主动提醒规则；新装与清空数据后从空列表开始，不预置规则。 */
+    val reminderRules: List<ReminderRule> = emptyList(),
     /** 全局冷却分钟数；0 表示关闭冷却。 */
     val reminderCooldownMinutes: Int = 30,
     /** 免打扰开关；默认关闭，开启后默认 23:00–07:00 只记录不弹出。 */
