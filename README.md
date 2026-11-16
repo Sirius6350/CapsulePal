@@ -47,21 +47,16 @@ Room + DataStore，数据全部落在应用私有目录。备份是你手动导�
 
 ## 截图
 
-> 截图占位：把图片放进 `docs/screenshots/`（建议 1080×2400、WebP、单张 < 300 KB），
-> 然后取消下方注释块即可。
-
-| 首页 | 电池监测 | 待办 | 桌面组件 |
-| :---: | :---: | :---: | :---: |
-| `docs/screenshots/01-home.png` | `docs/screenshots/02-battery.png` | `docs/screenshots/03-todo.png` | `docs/screenshots/04-widgets.png` |
-
-<!--
 <p align="center">
-  <img src="docs/screenshots/01-home.png"    width="200" alt="首页" />
-  <img src="docs/screenshots/02-battery.png" width="200" alt="电池监测" />
-  <img src="docs/screenshots/03-todo.png"    width="200" alt="待办" />
-  <img src="docs/screenshots/04-widgets.png" width="200" alt="桌面组件" />
+  <img src="docs/screenshots/01-home.webp"    width="24%" alt="首页" />
+  <img src="docs/screenshots/02-battery.webp" width="24%" alt="电池监测" />
+  <img src="docs/screenshots/03-todo.webp"    width="24%" alt="待办" />
+  <img src="docs/screenshots/04-widgets.webp" width="23%" alt="桌面组件" />
 </p>
--->
+
+<p align="center">
+  <sub>首页 · 电池监测 · 待办 · 桌面组件</sub>
+</p>
 
 ---
 
