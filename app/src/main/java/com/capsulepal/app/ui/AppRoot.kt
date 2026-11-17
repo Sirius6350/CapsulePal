@@ -732,7 +732,7 @@ private fun OnboardingOverlay(
                 )
                 Spacer(Modifier.height(10.dp))
                 OnboardingPoint(R.drawable.ic_calendar, "全天日程在这里排", "准备窗口、进行中、完成后衔接下一件")
-                OnboardingPoint(R.drawable.ic_notification, "岛上只看当前一件", "ColorOS 17 上岛，不做常驻动画")
+                OnboardingPoint(R.drawable.ic_notification, "岛上只看当前一件", "Android16及以上系统上岛，不做常驻动画")
                 OnboardingPoint(R.drawable.ic_ui_lock, "数据只留在本机", "没有 INTERNET 权限，也没有外部接口")
             }
 
@@ -789,7 +789,7 @@ private fun OnboardingOverlay(
                     modifier = Modifier.align(Alignment.End)
                 ) {
                     Text(
-                        text = "ColorOS 后台设置步骤",
+                        text = "后台设置步骤",
                         style = MaterialTheme.typography.labelMedium
                     )
                 }
@@ -857,11 +857,11 @@ private fun ColorOsGuideDialog(onDismiss: () -> Unit) {
     val context = LocalContext.current
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("ColorOS 后台守护") },
+        title = { Text("后台守护") },
         text = {
             Column {
                 Text(
-                    text = "ColorOS 17 需要手动放行几步，否则锁屏后容易被清掉：",
+                    text = "Android16及以上系统需要手动放行几步，否则锁屏后容易被清掉：",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

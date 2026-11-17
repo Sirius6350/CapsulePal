@@ -856,7 +856,7 @@ fun SettingsScreen(
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 PermissionRow(
                     iconRes = R.drawable.ic_ui_shield,
-                    title = "ColorOS 后台守护",
+                    title = "后台守护",
                     description = "自启动、耗电管理、最近任务锁定",
                     granted = false,
                     actionLabel = "看步骤",

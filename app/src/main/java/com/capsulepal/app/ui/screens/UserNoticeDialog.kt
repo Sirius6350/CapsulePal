@@ -32,7 +32,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.capsulepal.app.ui.components.CapsuleButton
 
-private val noticeHighlights = listOf("ColorOS16", "本地离线", "任何", "异常高")
+private val noticeHighlights = listOf("Android16", "本地离线", "任何", "异常高")
 
 /**
  * 用户须知：首次启动必须确认；设置页「关于」里可再次打开。
@@ -93,14 +93,14 @@ fun UserNoticeDialog(
                         .verticalScroll(rememberScrollState())
                 ) {
                     NoticeParagraph(
-                        text = "1. 欢迎使用“胶囊伙伴”，这是一款面向ColorOS16及以上系统版本的轻量本地离线应用，" +
+                        text = "1. 欢迎使用“胶囊伙伴”，这是一款面向Android16及以上系统版本的轻量本地离线应用，" +
                             "未申请任何网络权限。当您发现应用出现任何流量消耗或异常高的存储占用时，" +
                             "请立刻停止使用并卸载。"
                     )
                     Spacer(Modifier.height(14.dp))
                     NoticeParagraph(
                         text = "2. 为确保能完整使用该应用内的核心功能，" +
-                            "请确保您的设备搭载的是ColorOS16及以上的系统版本。"
+                            "请确保您的设备搭载的是Android16及以上的系统版本。"
                     )
                     Spacer(Modifier.height(8.dp))
                 }
