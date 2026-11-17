@@ -13,6 +13,7 @@ import android.graphics.RectF
 import android.graphics.Typeface
 import android.net.Uri
 import android.os.BatteryManager
+import android.util.TypedValue
 import android.view.View
 import android.widget.RemoteViews
 import androidx.core.content.ContextCompat
@@ -55,7 +56,7 @@ object CapsuleWidgets {
     private const val MIN_INTERVAL_MILLIS = 20_000L
 
     /** 今日待办组件最多能排几行；实际行数由组件高度决定。 */
-    private const val MAX_TODO_ROWS = 6
+    private const val MAX_TODO_ROWS = 60
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val lastRunAt = AtomicLong(0L)
@@ -137,8 +138,6 @@ object CapsuleWidgets {
         snapshot: Snapshot
     ) {
         val density = context.resources.displayMetrics.density
-        val ringPx = (76 * density).toInt()
-        val ring = ringBitmap(context, ringPx, snapshot.levelPct)
         val batteryPage = batteryPage(snapshot.settings.version)
         val tempText = snapshot.tempC
             ?.let { String.format(Locale.CHINA, "%.1f°C", it) }
@@ -148,16 +147,51 @@ object CapsuleWidgets {
         ids.forEach { id ->
             val options = runCatching { manager.getAppWidgetOptions(id) }.getOrNull()
             val minWidth = options?.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH) ?: 250
-            val views = RemoteViews(context.packageName, R.layout.widget_metric)
+            val minHeight = options?.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT) ?: 110
+            // 高瘦尺寸改用竖版：电量环在上，温度与充电次数在下；宽扁尺寸保持左右排布。
+            val tall = minHeight > minWidth * 1.3f
+            val views = RemoteViews(
+                context.packageName,
+                if (tall) R.layout.widget_metric_tall else R.layout.widget_metric
+            )
+            // 环的直径跟着可用空间走，拉大组件时一起变大。
+            val ringDp = if (tall) {
+                minOf(minWidth * 0.72f, minHeight * 0.34f).coerceIn(56f, 160f)
+            } else {
+                minOf(minWidth * 0.30f, minHeight * 0.62f).coerceIn(48f, 120f)
+            }
+            val ring = ringBitmap(context, (ringDp * density).toInt(), snapshot.levelPct)
             views.setImageViewBitmap(R.id.widget_metric_ring, ring)
+            views.setViewLayoutWidth(
+                R.id.widget_metric_ring, ringDp, TypedValue.COMPLEX_UNIT_DIP
+            )
+            views.setViewLayoutHeight(
+                R.id.widget_metric_ring, ringDp, TypedValue.COMPLEX_UNIT_DIP
+            )
+            // 字号随环一起缩放，小尺寸不会挤，大尺寸不会显得空。
+            val tempSp = (ringDp * if (tall) 0.34f else 0.27f).coerceIn(17f, 36f)
+            val labelSp = (ringDp * 0.16f).coerceIn(10f, 14f)
+            val chargeSp = (ringDp * 0.22f).coerceIn(13f, 24f)
             views.setTextViewText(R.id.widget_metric_temp, tempText)
             views.setTextViewText(R.id.widget_metric_charge, chargeText)
-            // 三档尺寸：2x2 收掉电量环，只留温度与充电次数；4x2 / 5x2 用左环 + 右侧上下两段。
+            views.setTextViewTextSize(
+                R.id.widget_metric_temp, TypedValue.COMPLEX_UNIT_SP, tempSp
+            )
+            views.setTextViewTextSize(
+                R.id.widget_metric_charge, TypedValue.COMPLEX_UNIT_SP, chargeSp
+            )
+            views.setTextViewTextSize(
+                R.id.widget_metric_temp_label, TypedValue.COMPLEX_UNIT_SP, labelSp
+            )
+            views.setTextViewTextSize(
+                R.id.widget_metric_charge_label, TypedValue.COMPLEX_UNIT_SP, labelSp
+            )
+            // 2x2 这种矮宽尺寸收掉电量环，只留温度与充电次数。
             views.setViewVisibility(
                 R.id.widget_metric_ring,
-                if (minWidth >= 170) View.VISIBLE else View.GONE
+                if (tall || minWidth >= 170) View.VISIBLE else View.GONE
             )
-            // 5x2 空间更宽，内边距略微放大，避免内容贴边。
+            // 空间越大，内边距略微放大，避免内容贴边。
             val padding = ((if (minWidth >= 300) 18 else 14) * density).toInt()
             views.setViewPadding(
                 R.id.widget_metric_root, padding, padding, padding, padding
@@ -231,13 +265,12 @@ object CapsuleWidgets {
         val nearest = tasks
             .filter { it.isOpen }
             .sortedBy { abs(it.startMillis - now) }
-            .take(MAX_TODO_ROWS)
 
         ids.forEach { id ->
             val options = runCatching { manager.getAppWidgetOptions(id) }.getOrNull()
             val minHeight = options?.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT) ?: 120
-            // 高度决定能放下几行：1 行 ≈ 110dp，之后每多 40dp 多一行，最多 6 行。
-            val capacity = ((minHeight - 70) / 40).coerceIn(0, MAX_TODO_ROWS)
+            // 高度决定能放下几行：扣除标题与进度条后，每行约 30dp。
+            val capacity = ((minHeight - 72) / 30).coerceIn(0, MAX_TODO_ROWS)
             val views = RemoteViews(context.packageName, R.layout.widget_todo)
             views.setTextViewText(R.id.widget_todo_count, "$done/$total")
             views.setTextViewText(R.id.widget_todo_percent, "$percent%")
@@ -254,19 +287,7 @@ object CapsuleWidgets {
                 R.id.widget_todo_empty,
                 if (nearest.isEmpty()) View.VISIBLE else View.GONE
             )
-            val rowIds = intArrayOf(
-                R.id.widget_todo_row_1, R.id.widget_todo_row_2, R.id.widget_todo_row_3,
-                R.id.widget_todo_row_4, R.id.widget_todo_row_5, R.id.widget_todo_row_6
-            )
-            val timeIds = intArrayOf(
-                R.id.widget_todo_time_1, R.id.widget_todo_time_2, R.id.widget_todo_time_3,
-                R.id.widget_todo_time_4, R.id.widget_todo_time_5, R.id.widget_todo_time_6
-            )
-            val titleIds = intArrayOf(
-                R.id.widget_todo_title_1, R.id.widget_todo_title_2, R.id.widget_todo_title_3,
-                R.id.widget_todo_title_4, R.id.widget_todo_title_5, R.id.widget_todo_title_6
-            )
-            // 分区点击：每一行都回到待办页。
+            // 分区点击：点标题或进度条都回到待办页。
             views.setOnClickPendingIntent(
                 R.id.widget_todo_header,
                 pageIntent(context, CapsulePage.TODAY, id * 10 + 1)
@@ -275,26 +296,25 @@ object CapsuleWidgets {
                 R.id.widget_todo_progress,
                 pageIntent(context, CapsulePage.TODAY, id * 10 + 2)
             )
-            rowIds.forEachIndexed { index, rowId ->
-                val task = nearest.getOrNull(index)
-                val show = task != null && index < capacity
-                views.setViewVisibility(rowId, if (show) View.VISIBLE else View.GONE)
-                if (task != null) {
-                    views.setTextViewText(
-                        timeIds[index],
-                        String.format(
-                            Locale.CHINA,
-                            "%02d:%02d",
-                            task.startTime.hour,
-                            task.startTime.minute
-                        )
+            // 行数不再写死在布局里，按组件高度动态添加，拉多高就能显示多少条。
+            views.removeAllViews(R.id.widget_todo_rows)
+            nearest.take(capacity).forEachIndexed { index, task ->
+                val row = RemoteViews(context.packageName, R.layout.widget_todo_item)
+                row.setTextViewText(
+                    R.id.widget_todo_item_time,
+                    String.format(
+                        Locale.CHINA,
+                        "%02d:%02d",
+                        task.startTime.hour,
+                        task.startTime.minute
                     )
-                    views.setTextViewText(titleIds[index], task.title)
-                }
-                views.setOnClickPendingIntent(
-                    rowId,
+                )
+                row.setTextViewText(R.id.widget_todo_item_title, task.title)
+                row.setOnClickPendingIntent(
+                    R.id.widget_todo_item_root,
                     pageIntent(context, CapsulePage.TODAY, id * 10 + 3 + index)
                 )
+                views.addView(R.id.widget_todo_rows, row)
             }
             manager.updateAppWidget(id, views)
         }
@@ -313,10 +333,14 @@ object CapsuleWidgets {
             val options = runCatching { manager.getAppWidgetOptions(id) }.getOrNull()
             val minWidth = options?.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH) ?: 60
             val minHeight = options?.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT) ?: 60
-            // 三档：1x1 只留加号；1x2 加号 +「即时」；2x2 加号 + 两行文案。
+            // 1x1 / 1x2 只留加号；2 列以内且不矮的尺寸用竖版，避免横排把文字挤没。
             val compact = minWidth < 110
-            val singleLine = !compact && minHeight < 110
-            val views = RemoteViews(context.packageName, R.layout.widget_instant)
+            val tall = !compact && minWidth < 170 && minHeight >= 100
+            val singleLine = !compact && !tall && minHeight < 110
+            val views = RemoteViews(
+                context.packageName,
+                if (tall) R.layout.widget_instant_tall else R.layout.widget_instant
+            )
             views.setViewVisibility(
                 R.id.widget_instant_main,
                 if (compact) View.GONE else View.VISIBLE
@@ -324,6 +348,32 @@ object CapsuleWidgets {
             views.setViewVisibility(
                 R.id.widget_instant_solo,
                 if (compact) View.VISIBLE else View.GONE
+            )
+            // 加号与文字随尺寸缩放，小尺寸不挤、大尺寸不空。
+            val plusDp = when {
+                compact -> (minOf(minWidth, minHeight) * 0.42f).coerceIn(40f, 72f)
+                tall -> (minWidth * 0.40f).coerceIn(44f, 84f)
+                else -> (minHeight * 0.33f).coerceIn(30f, 48f)
+            }
+            val plusId = if (compact) R.id.widget_instant_solo else R.id.widget_instant_plus
+            views.setViewLayoutWidth(plusId, plusDp, TypedValue.COMPLEX_UNIT_DIP)
+            views.setViewLayoutHeight(plusId, plusDp, TypedValue.COMPLEX_UNIT_DIP)
+            views.setTextViewTextSize(
+                plusId, TypedValue.COMPLEX_UNIT_SP, (plusDp * 0.55f).coerceIn(20f, 42f)
+            )
+            val titleSp = (minOf(minWidth, minHeight) * 0.14f).coerceIn(13f, 20f)
+            views.setTextViewTextSize(
+                R.id.widget_instant_title, TypedValue.COMPLEX_UNIT_SP, titleSp
+            )
+            views.setTextViewTextSize(
+                R.id.widget_instant_subtitle,
+                TypedValue.COMPLEX_UNIT_SP,
+                (titleSp * 0.78f).coerceIn(9f, 14f)
+            )
+            views.setTextViewTextSize(
+                R.id.widget_instant_action,
+                TypedValue.COMPLEX_UNIT_SP,
+                (titleSp * 0.85f).coerceIn(11f, 15f)
             )
             if (!compact) {
                 views.setTextViewText(
@@ -344,9 +394,11 @@ object CapsuleWidgets {
                     views.setTextViewText(R.id.widget_instant_subtitle, "即时待办 · 进行中")
                 }
             }
+            // 竖版但高度不够时先收起「完成」，避免文字或按钮被裁掉。
+            val showAction = !compact && instant != null && (!tall || minHeight >= 150)
             views.setViewVisibility(
                 R.id.widget_instant_action,
-                if (!singleLine && !compact && instant != null) View.VISIBLE else View.GONE
+                if (showAction) View.VISIBLE else View.GONE
             )
             val mainIntent = if (instant != null) {
                 pageIntent(context, CapsulePage.TODAY, id * 10 + 1)

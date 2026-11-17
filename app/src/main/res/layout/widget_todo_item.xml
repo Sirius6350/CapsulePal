@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 今日待办组件的一行：时间 + 标题，运行时按可用高度重复添加。 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_todo_item_root"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:paddingTop="7dp">
+
+    <TextView
+        android:id="@+id/widget_todo_item_time"
+        android:layout_width="42dp"
+        android:layout_height="wrap_content"
+        android:textColor="@color/widget_ink_soft"
+        android:textSize="11sp" />
+
+    <TextView
+        android:id="@+id/widget_todo_item_title"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:textColor="@color/widget_ink"
+        android:textSize="13sp" />
+</LinearLayout>
