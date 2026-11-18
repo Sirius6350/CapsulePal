@@ -151,6 +151,43 @@ abstract class TaskDao {
     @Query("DELETE FROM tasks WHERE seriesId = :seriesId AND seriesId != 0")
     abstract suspend fun deleteSeriesTasks(seriesId: Long): Int
 
+    @Query("SELECT id FROM tasks WHERE seriesId = :seriesId AND seriesId != 0 AND epochDay > :epochDay")
+    abstract suspend fun idsInSeriesAfter(seriesId: Long, epochDay: Long): List<Long>
+
+    @Query("DELETE FROM tasks WHERE seriesId = :seriesId AND seriesId != 0 AND epochDay > :epochDay")
+    abstract suspend fun deleteSeriesRowsAfter(seriesId: Long, epochDay: Long): Int
+
+    @Query("SELECT id FROM tasks WHERE seriesId = :seriesId AND seriesId != 0 AND epochDay >= :epochDay")
+    abstract suspend fun idsInSeriesFrom(seriesId: Long, epochDay: Long): List<Long>
+
+    @Query("DELETE FROM tasks WHERE seriesId = :seriesId AND seriesId != 0 AND epochDay >= :epochDay")
+    abstract suspend fun deleteSeriesRowsFrom(seriesId: Long, epochDay: Long): Int
+
+    @Transaction
+    @Query("SELECT * FROM tasks WHERE seriesId = :seriesId AND seriesId != 0 AND epochDay > :epochDay")
+    abstract suspend fun rowsInSeriesAfter(seriesId: Long, epochDay: Long): List<TaskWithSteps>
+
+    /** 系列里日期最晚的一条，作为后续补实例的模板（编辑系列时它承载最新字段）。 */
+    @Transaction
+    @Query(
+        "SELECT * FROM tasks WHERE seriesId = :seriesId AND seriesId != 0 " +
+            "ORDER BY epochDay DESC, id DESC LIMIT 1"
+    )
+    abstract suspend fun getSeriesTail(seriesId: Long): TaskWithSteps?
+
+    /** 编辑后日期可能和系列里现有实例重合，删掉同一天的其它待开始实例。 */
+    @Query(
+        "SELECT id FROM tasks WHERE seriesId = :seriesId AND seriesId != 0 AND epochDay = :epochDay " +
+            "AND id != :keepId AND status IN ('IDLE', 'PREPARE_WINDOW')"
+    )
+    abstract suspend fun idsInSeriesOnDay(seriesId: Long, epochDay: Long, keepId: Long): List<Long>
+
+    @Query(
+        "DELETE FROM tasks WHERE seriesId = :seriesId AND seriesId != 0 AND epochDay = :epochDay " +
+            "AND id != :keepId AND status IN ('IDLE', 'PREPARE_WINDOW')"
+    )
+    abstract suspend fun deleteSeriesRowsOnDay(seriesId: Long, epochDay: Long, keepId: Long): Int
+
     @Query("DELETE FROM task_steps WHERE taskId = :taskId")
     abstract suspend fun deleteSteps(taskId: Long)
 

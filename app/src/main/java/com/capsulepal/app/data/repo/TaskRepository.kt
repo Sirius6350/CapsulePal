@@ -169,12 +169,25 @@ class TaskRepository(
         return fixed
     }
 
-    suspend fun upsert(draft: TaskDraft): Long {
+    /** 保存结果：removedIds 是这次编辑顺带删掉的实例，调用方需撤销它们的闹钟与通知。 */
+    data class UpsertResult(val id: Long, val removedIds: List<Long> = emptyList())
+
+    suspend fun upsert(draft: TaskDraft): Long = upsertDetailed(draft).id
+
+    suspend fun upsertDetailed(draft: TaskDraft): UpsertResult {
         val existing = if (draft.id != 0L) taskDao.getById(draft.id)?.toDomain() else null
         val existingStatus = existing?.status ?: TaskStatus.IDLE
         // toTask() 不带 seriesId：编辑时直接覆盖会把这条待办从重复系列里拆出去，
         // 于是计划里只剩单条、取消关联后系列成员还留在计划里。
-        val seriesId = existing?.let { resolveSeriesId(it) } ?: 0L
+        val previousSeriesId = existing?.let { resolveSeriesId(it) } ?: 0L
+        val wantsSeries = draft.repeat != RepeatRule.ONCE
+        // 单次改成重复时，这条自己就是系列头；全新待办要等插库拿到 id 之后再补。
+        val seriesId = when {
+            !wantsSeries -> 0L
+            previousSeriesId != 0L -> previousSeriesId
+            existing != null -> existing.id
+            else -> 0L
+        }
         val task = draft.toTask(existingStatus).copy(seriesId = seriesId)
         // 时间被改到更晚时，旧的准备状态会让人误以为已经进入准备窗口，重置回待开始。
         val scheduleChanged = existing != null && (
@@ -195,31 +208,119 @@ class TaskRepository(
         if (seriesId != 0L) {
             taskDao.assignPlanToSeries(seriesId, draft.planId)
         }
-        if (existing == null && task.repeat != RepeatRule.ONCE) {
-            taskDao.updateSeriesId(id, id)
-            var until = if (task.repeat == RepeatRule.CONSECUTIVE) {
-                task.date.plusDays(
-                    task.repeatCount.coerceIn(2, MAX_CONSECUTIVE_DAYS) - 1L
-                )
-            } else {
-                task.date.plusDays(SERIES_HORIZON_DAYS)
+
+        val removedIds = mutableListOf<Long>()
+        when {
+            existing == null -> {
+                if (wantsSeries) {
+                    taskDao.updateSeriesId(id, id)
+                    materializeAround(saved.copy(id = id, seriesId = id), id)
+                }
             }
-            // 计划内的重复待办不越过计划结束日，避免把分母撑到计划之外。
-            planEndDate(task.planId)?.let { end -> if (until.isAfter(end)) until = end }
-            if (!until.isBefore(task.date.plusDays(1))) {
-                materializeSeries(
-                    base = task.copy(id = id, seriesId = id),
-                    seriesId = id,
-                    from = task.date.plusDays(1),
-                    until = until
-                )
+            !wantsSeries -> {
+                if (previousSeriesId != 0L) {
+                    // 重复改成仅一次：删掉这一天之后的实例，当前这条脱出系列。
+                    removedIds += taskDao.idsInSeriesAfter(previousSeriesId, saved.date.toEpochDay())
+                    taskDao.deleteSeriesRowsAfter(previousSeriesId, saved.date.toEpochDay())
+                    taskDao.updateSeriesId(id, 0L)
+                    closeSeries(previousSeriesId)
+                }
             }
-        } else if (existing != null && seriesId != 0L && task.repeat != RepeatRule.ONCE) {
-            // 编辑可能刚把系列补回来、或换了计划：立即补到当前窗口，
-            // 计划详情里马上就能看到整条系列，而不是只看到被编辑的这一条。
-            extendSeries(seriesId)
+            previousSeriesId == 0L -> {
+                // 仅一次改成重复：以当前这条为系列头，按新规则向后铺。
+                taskDao.updateSeriesId(id, id)
+                materializeAround(saved.copy(id = id, seriesId = id), id)
+            }
+            else -> {
+                val ruleChanged = existing.repeat != saved.repeat ||
+                    existing.repeatDays != saved.repeatDays ||
+                    existing.repeatCount != saved.repeatCount ||
+                    existing.skipHolidays != saved.skipHolidays
+                if (ruleChanged) {
+                    // 规则变了：旧的未来实例作废，按新规则重铺。
+                    removedIds += taskDao.idsInSeriesAfter(previousSeriesId, saved.date.toEpochDay())
+                    taskDao.deleteSeriesRowsAfter(previousSeriesId, saved.date.toEpochDay())
+                } else {
+                    // 规则没变：把这次编辑同步到这一天之后的整条系列。
+                    syncFutureRows(previousSeriesId, saved)
+                }
+                // 日期被挪动后可能与系列里已有的实例重合，去掉重复的那条。
+                removedIds += taskDao.idsInSeriesOnDay(previousSeriesId, saved.date.toEpochDay(), id)
+                taskDao.deleteSeriesRowsOnDay(previousSeriesId, saved.date.toEpochDay(), id)
+                taskDao.updateSeriesId(id, previousSeriesId)
+                materializeAround(saved.copy(id = id, seriesId = previousSeriesId), previousSeriesId)
+            }
         }
-        return id
+        return UpsertResult(id, removedIds)
+    }
+
+    /** 删除这一天及之后的所有实例，更早的历史保留；返回被删除的实例 id。 */
+    suspend fun deleteSeriesFrom(taskId: Long): List<Long> {
+        val task = taskDao.getById(taskId)?.toDomain() ?: return emptyList()
+        val seriesId = resolveSeriesId(task)
+        return if (seriesId == 0L) {
+            taskDao.deleteTask(taskId)
+            listOf(taskId)
+        } else {
+            val removed = taskDao.idsInSeriesFrom(seriesId, task.date.toEpochDay())
+            taskDao.deleteSeriesRowsFrom(seriesId, task.date.toEpochDay())
+            closeSeries(seriesId)
+            removed
+        }
+    }
+
+    /** 把被编辑实例的字段同步到系列里这一天之后的待开始实例。 */
+    private suspend fun syncFutureRows(seriesId: Long, template: Task) {
+        taskDao.rowsInSeriesAfter(seriesId, template.date.toEpochDay()).forEach { row ->
+            val current = row.toDomain()
+            if (current.status != TaskStatus.IDLE) return@forEach
+            taskDao.upsert(
+                current.copy(
+                    title = template.title,
+                    shortTitle = template.shortTitle,
+                    startTime = template.startTime,
+                    durationMinutes = template.durationMinutes,
+                    prepareMinutes = template.prepareMinutes,
+                    category = template.category,
+                    customCategory = template.customCategory,
+                    priority = template.priority,
+                    note = template.note,
+                    repeat = template.repeat,
+                    repeatDays = template.repeatDays,
+                    repeatCount = template.repeatCount,
+                    skipHolidays = template.skipHolidays,
+                    groupId = template.groupId,
+                    planId = template.planId,
+                    kind = template.kind,
+                    steps = template.steps.map { it.copy(id = 0L) }
+                )
+            )
+        }
+    }
+
+    /** 系列只剩历史时把模板改成「仅一次」，避免跨天维护又把未来实例补回来。 */
+    private suspend fun closeSeries(seriesId: Long) {
+        val tail = taskDao.getSeriesTail(seriesId)?.toDomain() ?: return
+        if (tail.repeat == RepeatRule.ONCE) return
+        taskDao.upsert(tail.copy(repeat = RepeatRule.ONCE, repeatDays = emptySet(), repeatCount = 0))
+    }
+
+    /** 按当前规则把这一条之后的实例补到滚动窗口；不回填今天之前的历史。 */
+    private suspend fun materializeAround(template: Task, seriesId: Long) {
+        val today = LocalDate.now()
+        var until = when (template.repeat) {
+            RepeatRule.ONCE -> return
+            RepeatRule.CONSECUTIVE -> template.date.plusDays(
+                template.repeatCount.coerceIn(2, MAX_CONSECUTIVE_DAYS) - 1L
+            )
+            RepeatRule.DAILY, RepeatRule.WEEKLY -> today.plusDays(SERIES_HORIZON_DAYS)
+        }
+        // 计划内的重复待办不越过计划结束日，避免把分母撑到计划之外。
+        planEndDate(template.planId)?.let { end -> if (until.isAfter(end)) until = end }
+        var from = template.date.plusDays(1)
+        if (from.isBefore(today)) from = today
+        if (from.isAfter(until)) return
+        materializeSeries(template, seriesId, from, until)
     }
 
     /** 计划结束日；重复计划或未设置时返回 null。 */
@@ -293,17 +394,19 @@ class TaskRepository(
         today: LocalDate,
         horizon: LocalDate
     ) {
-        // 连续 n 天在创建时已一次性铺满，删掉某一天就不该被自动补回来。
-        if (head.repeat == RepeatRule.CONSECUTIVE) return
+        // 用系列里最晚的一条当模板：编辑系列时会同步到这里，保证新补的实例用最新字段。
+        val template = taskDao.getSeriesTail(seriesId)?.toDomain() ?: head
+        // 连续 n 天在创建时已一次性铺满；仅一次表示系列已被手动结束。
+        if (template.repeat == RepeatRule.CONSECUTIVE || template.repeat == RepeatRule.ONCE) return
         val lastDay = taskDao.lastEpochDayOfSeries(seriesId) ?: return
         var start = LocalDate.ofEpochDay(lastDay).plusDays(1)
         var target = horizon
         // 计划内系列只补到计划结束日。
-        planEndDate(head.planId)?.let { end -> if (target.isAfter(end)) target = end }
+        planEndDate(template.planId)?.let { end -> if (target.isAfter(end)) target = end }
         if (start.isAfter(target)) return
         if (start.isBefore(today)) start = today
         if (start.isAfter(target)) return
-        materializeSeries(head, seriesId, start, target)
+        materializeSeries(template, seriesId, start, target)
     }
 
     suspend fun setStatus(id: Long, status: TaskStatus) {

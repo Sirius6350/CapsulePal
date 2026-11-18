@@ -818,6 +818,14 @@ class CapsuleViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    /** 删除这一天及之后的所有实例，今天之前的记录保留。 */
+    fun deleteTaskFrom(taskId: Long) {
+        viewModelScope.launch {
+            container.deleteTaskFrom(taskId)
+            _message.value = "这个待办已经结束，更早的记录保留。"
+        }
+    }
+
     /** 计划详情 · 按系列：长按后一次性删除整个系列的实例。 */
     fun deleteSeries(seriesId: Long) {
         viewModelScope.launch {

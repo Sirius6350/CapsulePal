@@ -39,6 +39,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import com.capsulepal.app.data.model.CategoryEntry
+import com.capsulepal.app.data.model.RepeatRule
 import com.capsulepal.app.data.model.TaskDraft
 import com.capsulepal.app.ui.components.CapsuleButton
 import com.capsulepal.app.ui.components.ChoiceChip
@@ -60,7 +61,9 @@ fun ScheduleEditorSheet(
     onSave: (TaskDraft) -> Unit,
     onDelete: (Long) -> Unit,
     categoryLayout: List<CategoryEntry>,
-    saving: Boolean
+    saving: Boolean,
+    /** 删除这一天及之后的全部实例（保留历史）。 */
+    onDeleteSeries: (Long) -> Unit = onDelete
 ) {
     var title by rememberSaveable(initial.id) { mutableStateOf(initial.title) }
     var note by rememberSaveable(initial.id) { mutableStateOf(initial.note) }
@@ -72,6 +75,7 @@ fun ScheduleEditorSheet(
     }
     var category by rememberSaveable(initial.id) { mutableStateOf(initial.category) }
     var showDatePicker by remember { mutableStateOf(false) }
+    var confirmDelete by remember { mutableStateOf(false) }
     var editingHour by remember { mutableStateOf(false) }
     var editingMinute by remember { mutableStateOf(false) }
 
@@ -196,7 +200,7 @@ fun ScheduleEditorSheet(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (!isNew) {
                         TextButton(
-                            onClick = { onDelete(initial.id) },
+                            onClick = { confirmDelete = true },
                             enabled = !saving
                         ) {
                             Text("删除", color = MaterialTheme.colorScheme.error)
@@ -277,6 +281,57 @@ fun ScheduleEditorSheet(
             onConfirm = {
                 minute = it
                 editingMinute = false
+            }
+        )
+    }
+
+    if (confirmDelete) {
+        val repeating = initial.repeat != RepeatRule.ONCE
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text(if (repeating) "删除这个重复待办？" else "删除这件事？") },
+            text = {
+                Text(
+                    if (repeating) {
+                        "「删除当天」只移除这一天；「删除全部」移除这一天及之后的全部实例，更早的记录会保留。"
+                    } else {
+                        "删掉后不会影响伙伴的成长记录。"
+                    }
+                )
+            },
+            confirmButton = {
+                if (repeating) {
+                    Row {
+                        TextButton(
+                            onClick = {
+                                confirmDelete = false
+                                onDelete(initial.id)
+                            }
+                        ) {
+                            Text("删除当天")
+                        }
+                        TextButton(
+                            onClick = {
+                                confirmDelete = false
+                                onDeleteSeries(initial.id)
+                            }
+                        ) {
+                            Text("删除全部", color = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                } else {
+                    TextButton(
+                        onClick = {
+                            confirmDelete = false
+                            onDelete(initial.id)
+                        }
+                    ) {
+                        Text("删除", color = MaterialTheme.colorScheme.error)
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDelete = false }) { Text("留下") }
             }
         )
     }

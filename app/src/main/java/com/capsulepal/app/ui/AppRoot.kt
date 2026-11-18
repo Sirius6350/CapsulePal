@@ -436,6 +436,10 @@ fun AppRoot(
                         vm.deleteTask(id)
                         closeEditor()
                     },
+                    onDeleteSeries = { id ->
+                        vm.deleteTaskFrom(id)
+                        closeEditor()
+                    },
                     categoryLayout = current.settings.categoryLayout,
                     saving = editorSaving
                 )
@@ -450,6 +454,10 @@ fun AppRoot(
                     onSave = { persistEditor(it) },
                     onDelete = { id ->
                         vm.deleteTask(id)
+                        closeEditor()
+                    },
+                    onDeleteSeries = { id ->
+                        vm.deleteTaskFrom(id)
                         closeEditor()
                     },
                     categoryLayout = current.settings.categoryLayout,

@@ -160,6 +160,8 @@ fun TaskEditorSheet(
     /** 从计划内创建时传入：固定归属，并把日期限制在计划区间内。 */
     planContext: Plan? = null,
     onDelete: (Long) -> Unit,
+    /** 删除这一天及之后的全部实例（保留历史）。 */
+    onDeleteSeries: (Long) -> Unit = onDelete,
     categoryLayout: List<CategoryEntry> = CategoryCatalog.defaultLayout,
     onAddCustomCategory: (String) -> Unit = {},
     saving: Boolean = false
@@ -1006,7 +1008,6 @@ fun TaskEditorSheet(
                 CapsuleButton(
                     text = if (saving) "保存中…" else "保存",
                     onClick = {
-                        val useRepeat = isNew
                         if (category == TaskCategory.CUSTOM &&
                             saveCustomPermanently &&
                             customCategoryName.isNotBlank()
@@ -1039,23 +1040,19 @@ fun TaskEditorSheet(
                                 groupId = groupId,
                                 planId = planContext?.id ?: planId,
                                 steps = steps.filter { it.title.isNotBlank() },
-                                repeat = if (useRepeat && repeat == RepeatRule.WEEKLY &&
-                                    repeatDays.isEmpty()
-                                ) RepeatRule.ONCE else if (useRepeat) repeat else initial.repeat,
-                                repeatDays = if (useRepeat) repeatDays.toSet() else initial.repeatDays,
-                                repeatCount = if (useRepeat && repeat == RepeatRule.CONSECUTIVE) {
-                                    repeatCount
+                                repeat = if (repeat == RepeatRule.WEEKLY && repeatDays.isEmpty()) {
+                                    RepeatRule.ONCE
                                 } else {
-                                    initial.repeatCount
+                                    repeat
                                 },
-                                skipHolidays = if (useRepeat &&
-                                    repeat != RepeatRule.ONCE &&
-                                    repeat != RepeatRule.CONSECUTIVE
-                                ) {
-                                    skipHolidays
+                                repeatDays = if (repeat == RepeatRule.WEEKLY) {
+                                    repeatDays.toSet()
                                 } else {
-                                    initial.skipHolidays
-                                }
+                                    emptySet()
+                                },
+                                repeatCount = if (repeat == RepeatRule.CONSECUTIVE) repeatCount else 0,
+                                skipHolidays = (repeat == RepeatRule.DAILY ||
+                                    repeat == RepeatRule.WEEKLY) && skipHolidays
                             )
                         )
                     },
@@ -1091,18 +1088,48 @@ fun TaskEditorSheet(
     }
 
     if (confirmDelete) {
+        val repeating = initial.repeat != RepeatRule.ONCE
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
-            title = { Text("删除这件事？") },
-            text = { Text("删掉后不会影响伙伴的成长记录。") },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        confirmDelete = false
-                        onDelete(initial.id)
+            title = { Text(if (repeating) "删除这个重复待办？" else "删除这件事？") },
+            text = {
+                Text(
+                    if (repeating) {
+                        "「删除当天」只移除这一天；「删除全部」移除这一天及之后的全部实例，更早的记录会保留。"
+                    } else {
+                        "删掉后不会影响伙伴的成长记录。"
                     }
-                ) {
-                    Text("删除", color = MaterialTheme.colorScheme.error)
+                )
+            },
+            confirmButton = {
+                if (repeating) {
+                    Row {
+                        TextButton(
+                            onClick = {
+                                confirmDelete = false
+                                onDelete(initial.id)
+                            }
+                        ) {
+                            Text("删除当天")
+                        }
+                        TextButton(
+                            onClick = {
+                                confirmDelete = false
+                                onDeleteSeries(initial.id)
+                            }
+                        ) {
+                            Text("删除全部", color = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                } else {
+                    TextButton(
+                        onClick = {
+                            confirmDelete = false
+                            onDelete(initial.id)
+                        }
+                    ) {
+                        Text("删除", color = MaterialTheme.colorScheme.error)
+                    }
                 }
             },
             dismissButton = {

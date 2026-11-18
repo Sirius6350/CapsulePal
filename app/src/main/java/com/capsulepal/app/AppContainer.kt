@@ -463,7 +463,13 @@ class AppContainer(context: Context) {
     }
 
     suspend fun saveTask(draft: TaskDraft): Long {
-        val id = taskRepository.upsert(draft)
+        val result = taskRepository.upsertDetailed(draft)
+        val id = result.id
+        // 编辑重复规则 / 改回仅一次时，系列里被收缩掉的实例要撤掉闹钟与通知。
+        result.removedIds.forEach { removed ->
+            scheduler.cancelTask(removed)
+            notifications.cancelReminder(removed)
+        }
         val task = taskRepository.task(id)
         if (task != null) {
             _exactAlarmAvailable.value = scheduler.scheduleTask(task)
@@ -482,6 +488,17 @@ class AppContainer(context: Context) {
         notifications.cancelReminder(taskId)
         taskRepository.delete(taskId)
         LiveUpdateService.refresh(appContext)
+    }
+
+    /** 删除这一天及之后的所有实例（保留今天之前的记录），并逐个撤销闹钟与通知。 */
+    suspend fun deleteTaskFrom(taskId: Long) {
+        val removed = taskRepository.deleteSeriesFrom(taskId)
+        removed.forEach { id ->
+            scheduler.cancelTask(id)
+            notifications.cancelReminder(id)
+        }
+        LiveUpdateService.refresh(appContext)
+        if (removed.isNotEmpty()) autoBackup()
     }
 
     /** 按系列删除整组待办：先逐个撤销闹钟与通知，再一次性删库。 */
@@ -532,6 +549,10 @@ class AppContainer(context: Context) {
     /** 导入备份后重建闹钟、日历心跳与后台监听。 */
     private suspend fun onBackupRestored() {
         _exactAlarmAvailable.value = scheduler.canScheduleExact()
+        // 旧备份里可能带着损坏的系列关系：恢复后先修好，再按当前窗口补实例。
+        val settings = settingsRepository.settings.first()
+        taskRepository.repairSeriesLinks()
+        taskRepository.ensureSeriesHorizon(include = { settings.version.isTaskVisible(it) })
         rescheduleVisibleTasks()
         syncBackgroundWatch(settingsRepository.settings.first())
         refreshCalendarNow()
