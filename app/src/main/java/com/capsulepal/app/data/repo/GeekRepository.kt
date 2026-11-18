@@ -16,6 +16,7 @@ import com.capsulepal.app.monitor.BatteryCalc
 import com.capsulepal.app.monitor.BatteryReading
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import kotlin.math.max
@@ -367,7 +368,7 @@ class GeekRepository(
 
     /**
      * Scene 风格的应用功耗（今日 00:00 至今）：
-     * - 使用时长取系统聚合的前台时长，避免事件流漏发 PAUSED 时算出「微博 8 小时」；
+     * - 使用时长取事件流还原的前台区间，并裁剪到今日 00:00 至当前时刻；
      * - 平均功耗取该应用前台时段内电池实时放电功率的均值（采样里的 powerW）；
      * - 平均 / 最高温度取同一时段的电池采样；
      * - 时段内没有放电采样（例如全程充电）时退回今天的平均放电功率。
@@ -375,22 +376,25 @@ class GeekRepository(
      */
     suspend fun refreshAppPower(nowMillis: Long) = appPowerMutex.withLock {
         val zone = ZoneId.systemDefault()
-        val startMillis = LocalDate.now().atStartOfDay(zone).toInstant().toEpochMilli()
+        val todayDate = Instant.ofEpochMilli(nowMillis).atZone(zone).toLocalDate()
+        val startMillis = todayDate.atStartOfDay(zone).toInstant().toEpochMilli()
         if (nowMillis <= startMillis) return
 
+        // 只认事件流还原出的前台区间：系统聚合接口（queryAndAggregateUsageStats）
+        // 返回的是整日桶数据，不会按 [startMillis, nowMillis] 裁剪，
+        // 凌晨查询会把昨天的时长与昨天的应用一起带进来。
         val intervals = foregroundIntervals(startMillis, nowMillis)
-        val aggregated = aggregatedForegroundMinutes(startMillis, nowMillis)
-        if (intervals.isEmpty() && aggregated.isEmpty()) return
+        if (intervals.isEmpty()) return
         val samples = dao.samplesSince(startMillis)
         val pm = appContext.packageManager
-        val today = LocalDate.now().toEpochDay()
+        val today = todayDate.toEpochDay()
         val excluded = excludedPackages()
 
-        val records = (aggregated.keys + intervals.keys).mapNotNull { packageName ->
+        val records = intervals.keys.mapNotNull { packageName ->
             if (packageName in excluded) return@mapNotNull null
             val ranges = intervals[packageName].orEmpty()
             val stat = statOf(ranges, samples)
-            val minutes = aggregated[packageName] ?: stat.minutes
+            val minutes = stat.minutes
             if (minutes <= 0) return@mapNotNull null
             val info = runCatching { pm.getApplicationInfo(packageName, 0) }.getOrNull()
             val label = info?.let {
@@ -448,19 +452,6 @@ class GeekRepository(
         val avgPowerW: Float?
     )
 
-    /** 系统聚合的前台分钟数（按包名）。 */
-    private fun aggregatedForegroundMinutes(startMillis: Long, endMillis: Long): Map<String, Int> {
-        val manager = appContext.getSystemService(UsageStatsManager::class.java) ?: return emptyMap()
-        val stats = runCatching {
-            manager.queryAndAggregateUsageStats(startMillis, endMillis)
-        }.getOrNull() ?: return emptyMap()
-        return stats.values.mapNotNull { stat ->
-            val packageName = stat.packageName ?: return@mapNotNull null
-            val minutes = (stat.totalTimeInForeground / 60_000L).toInt()
-            if (minutes <= 0) null else packageName to minutes
-        }.toMap()
-    }
-
     /**
      * 把当天的事件流还原成每个应用的前台区间。
      * 以「新的 ACTIVITY_RESUMED」作为上一个应用区间的结束信号，
@@ -472,8 +463,13 @@ class GeekRepository(
         endMillis: Long
     ): Map<String, List<LongRange>> {
         val manager = appContext.getSystemService(UsageStatsManager::class.java) ?: return emptyMap()
+        // 多取一段凌晨之前的事件，才能知道 0 点时前台停着哪个应用；
+        // 真正入库的区间仍会被裁剪到今天之内。
         val events = runCatching {
-            manager.queryEvents(startMillis, endMillis)
+            manager.queryEvents(
+                maxOf(0L, startMillis - FOREGROUND_LOOKBACK_MILLIS),
+                endMillis
+            )
         }.getOrNull() ?: return emptyMap()
         val result = mutableMapOf<String, MutableList<LongRange>>()
         var currentPackage: String? = null
@@ -481,8 +477,10 @@ class GeekRepository(
 
         fun close(atMillis: Long) {
             val packageName = currentPackage ?: return
-            if (atMillis > currentStart) {
-                result.getOrPut(packageName) { mutableListOf() } += currentStart until atMillis
+            val from = maxOf(currentStart, startMillis)
+            val to = minOf(atMillis, endMillis)
+            if (to > from) {
+                result.getOrPut(packageName) { mutableListOf() } += from until to
             }
             currentPackage = null
         }
@@ -590,6 +588,8 @@ class GeekRepository(
         const val PRUNE_INTERVAL_MILLIS = 10 * 60_000L
         const val TOUCH_INTERVAL_MILLIS = 60_000L
         const val APP_POWER_REFRESH_MILLIS = 15 * 60_000L
+        /** 回看 12 小时事件，用于识别跨零点的前台应用。 */
+        const val FOREGROUND_LOOKBACK_MILLIS = 12 * 60 * 60_000L
         /** 手机电池的标称电压，用于 mAh → W 的折算。 */
         const val NOMINAL_VOLTAGE = 3.85f
         const val MAX_APP_RECORDS = 40
