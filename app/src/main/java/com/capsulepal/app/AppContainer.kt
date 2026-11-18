@@ -856,6 +856,8 @@ class AppContainer(context: Context) {
             type != ReminderTriggerType.CALENDAR_SOON
         ) {
             "触发已到达，但正在播放媒体，按“媒体静默”跳过"
+        } else if (signal.type == SignalType.WIFI_CONNECTED) {
+            "收到 WiFi 连接（${signal.detail.ifBlank { "名称不可读" }}），但规则条件未匹配"
         } else {
             "触发已到达，但规则条件未匹配（星期/时段/对象/提前量）"
         }

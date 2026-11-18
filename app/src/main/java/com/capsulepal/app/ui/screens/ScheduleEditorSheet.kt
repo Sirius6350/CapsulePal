@@ -1,6 +1,7 @@
 package com.capsulepal.app.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -13,6 +14,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -41,6 +44,7 @@ import androidx.compose.material3.AlertDialog
 import com.capsulepal.app.data.model.CategoryEntry
 import com.capsulepal.app.data.model.RepeatRule
 import com.capsulepal.app.data.model.TaskDraft
+import com.capsulepal.app.domain.TimeUtils
 import com.capsulepal.app.ui.components.CapsuleButton
 import com.capsulepal.app.ui.components.ChoiceChip
 import java.time.Instant
@@ -78,6 +82,9 @@ fun ScheduleEditorSheet(
     var confirmDelete by remember { mutableStateOf(false) }
     var editingHour by remember { mutableStateOf(false) }
     var editingMinute by remember { mutableStateOf(false) }
+    var editingDuration by remember { mutableStateOf(false) }
+    var showMoreDurations by remember { mutableStateOf(false) }
+    var showMoreCategories by remember { mutableStateOf(false) }
 
     val categories = remember(categoryLayout) {
         categoryLayout.filterIsInstance<CategoryEntry.BuiltIn>().map { it.category }
@@ -162,26 +169,83 @@ fun ScheduleEditorSheet(
 
                 Spacer(Modifier.height(18.dp))
                 FieldLabel("预计时长")
+                val quickDurations = remember { listOf(15, 30, 45) }
+                val moreDurations = remember { listOf(60, 90, 120) }
+                val customDuration = duration !in quickDurations && duration !in moreDurations
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf(15, 30, 45, 60, 90, 120).forEach { value ->
+                    quickDurations.forEach { value ->
                         ChoiceChip(
-                            text = if (value < 60) "$value 分" else "${value / 60} 小时",
+                            text = TimeUtils.formatDuration(value),
                             selected = duration == value,
                             onClick = { duration = value }
                         )
+                    }
+                    Box {
+                        ChoiceChip(
+                            text = if (customDuration) TimeUtils.formatDuration(duration) else "更多",
+                            selected = customDuration || duration in moreDurations,
+                            onClick = { showMoreDurations = true }
+                        )
+                        DropdownMenu(
+                            expanded = showMoreDurations,
+                            onDismissRequest = { showMoreDurations = false }
+                        ) {
+                            moreDurations.forEach { value ->
+                                DropdownMenuItem(
+                                    text = { Text(TimeUtils.formatDuration(value)) },
+                                    onClick = {
+                                        duration = value
+                                        showMoreDurations = false
+                                    }
+                                )
+                            }
+                            DropdownMenuItem(
+                                text = { Text("自定义时长…") },
+                                onClick = {
+                                    showMoreDurations = false
+                                    editingDuration = true
+                                }
+                            )
+                        }
                     }
                 }
 
                 if (categories.isNotEmpty()) {
                     Spacer(Modifier.height(18.dp))
                     FieldLabel("分类")
+                    val quickCategories = remember(categories) { categories.take(3) }
+                    val moreCategories = remember(categories) { categories.drop(3) }
+                    val selectedInMore = category in moreCategories
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        categories.forEach { item ->
+                        quickCategories.forEach { item ->
                             ChoiceChip(
                                 text = item.label,
                                 selected = category == item,
                                 onClick = { category = item }
                             )
+                        }
+                        if (moreCategories.isNotEmpty()) {
+                            Box {
+                                ChoiceChip(
+                                    text = if (selectedInMore) category.label else "更多",
+                                    selected = selectedInMore,
+                                    onClick = { showMoreCategories = true }
+                                )
+                                DropdownMenu(
+                                    expanded = showMoreCategories,
+                                    onDismissRequest = { showMoreCategories = false }
+                                ) {
+                                    moreCategories.forEach { item ->
+                                        DropdownMenuItem(
+                                            text = { Text(item.label) },
+                                            onClick = {
+                                                category = item
+                                                showMoreCategories = false
+                                            }
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -284,6 +348,19 @@ fun ScheduleEditorSheet(
             }
         )
     }
+    if (editingDuration) {
+        NumberInputDialog(
+            title = "时长（分钟）",
+            initial = duration,
+            range = 5..(24 * 60),
+            maxDigits = 4,
+            onDismiss = { editingDuration = false },
+            onConfirm = {
+                duration = it
+                editingDuration = false
+            }
+        )
+    }
 
     if (confirmDelete) {
         val repeating = initial.repeat != RepeatRule.ONCE
@@ -342,6 +419,7 @@ private fun NumberInputDialog(
     title: String,
     initial: Int,
     range: IntRange,
+    maxDigits: Int = 2,
     onDismiss: () -> Unit,
     onConfirm: (Int) -> Unit
 ) {
@@ -354,7 +432,7 @@ private fun NumberInputDialog(
         text = {
             OutlinedTextField(
                 value = text,
-                onValueChange = { input -> text = input.filter { it.isDigit() }.take(2) },
+                onValueChange = { input -> text = input.filter { it.isDigit() }.take(maxDigits) },
                 modifier = Modifier.focusRequester(focus),
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)

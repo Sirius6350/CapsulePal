@@ -16,6 +16,7 @@ import android.location.LocationManager
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.net.wifi.WifiInfo
 import android.net.wifi.WifiManager
 import android.os.BatteryManager
@@ -34,6 +35,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.time.LocalDate
+import java.util.Collections
+import java.util.concurrent.ConcurrentHashMap
 import java.time.ZoneId
 
 abstract class SignalSource(protected val context: Context) {
@@ -168,44 +171,169 @@ class WifiSignalSource(
     private val connectivityManager by lazy {
         context.getSystemService(ConnectivityManager::class.java)
     }
-    private var wasOnWifi = false
+    private val wifiNetworks = Collections.newSetFromMap(ConcurrentHashMap<Network, Boolean>())
+    /** 上一次识别到的 SSID；为空表示当前没有 WiFi 或名称不可读。 */
+    @Volatile
+    private var lastSsid = ""
+    /** 上一次识别到的 WiFi 标识，名称不可读时用它区分是不是换了一个网络。 */
+    @Volatile
+    private var lastToken: Any? = null
 
     private fun currentSsid(): String = WifiSsidReader.currentSsid(context)
 
-    private val callback = object : ConnectivityManager.NetworkCallback() {
-        override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
-            val onWifi = capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
-            if (onWifi && !wasOnWifi) {
-                wasOnWifi = true
-                emit(SystemSignal(SignalType.WIFI_CONNECTED, detail = currentSsid()))
-            } else if (!onWifi && wasOnWifi) {
-                wasOnWifi = false
-                emit(SystemSignal(SignalType.WIFI_DISCONNECTED, detail = currentSsid()))
+    private fun ssidOf(network: Network): String {
+        val capabilities = runCatching {
+            connectivityManager?.getNetworkCapabilities(network)
+        }.getOrNull()
+        val info = capabilities?.transportInfo as? WifiInfo
+        return WifiSsidReader.sanitize(info?.ssid)
+    }
+
+    /**
+     * 只要 SSID 变了就发一次连接信号。
+     * 之前用 wasOnWifi 判断，WiFi 一直开着时换了路由器不会再触发，
+     * 只有关掉再开才会回到「未连接 -> 连接」的状态。
+     *
+     * [token] 用来在网络名不可读（未授权定位/定位关闭）时兜底：
+     * 换了网络标识也算一次连接，让「任意 WiFi」规则仍能触发。
+     */
+    @Synchronized
+    private fun offer(ssidRaw: String?, token: Any?) {
+        val ssid = WifiSsidReader.sanitize(ssidRaw)
+        if (ssid.isNotEmpty()) {
+            if (ssid == lastSsid) {
+                if (token != null) lastToken = token
+                return
             }
+            lastSsid = ssid
+            lastToken = token
+            emit(SystemSignal(SignalType.WIFI_CONNECTED, detail = ssid))
+            return
+        }
+        if (token != null && token != lastToken) {
+            lastToken = token
+            lastSsid = ""
+            emit(SystemSignal(SignalType.WIFI_CONNECTED))
+        }
+    }
+
+    private fun offerNetwork(network: Network) {
+        val ssid = ssidOf(network).takeIf { it.isNotEmpty() } ?: currentSsid()
+        offer(ssid, network)
+    }
+
+    @Synchronized
+    private fun handleDisconnect() {
+        if (wifiNetworks.isNotEmpty()) return
+        val hadWifi = lastSsid.isNotEmpty() || lastToken != null
+        lastSsid = ""
+        lastToken = null
+        if (hadWifi) emit(SystemSignal(SignalType.WIFI_DISCONNECTED))
+    }
+
+    private val callback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) {
+            wifiNetworks.add(network)
+            offerNetwork(network)
+        }
+
+        override fun onCapabilitiesChanged(
+            network: Network,
+            capabilities: NetworkCapabilities
+        ) {
+            if (!capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) return
+            wifiNetworks.add(network)
+            offerNetwork(network)
         }
 
         override fun onLost(network: Network) {
-            if (wasOnWifi) {
-                wasOnWifi = false
-                emit(SystemSignal(SignalType.WIFI_DISCONNECTED))
+            wifiNetworks.remove(network)
+            // 切换到另一个 WiFi 时旧网络也会 onLost，等所有 WiFi 都断开才算真正断开。
+            handleDisconnect()
+        }
+    }
+
+    /**
+     * 部分 ROM 在 WiFi 保持开启、只切换 SSID 时不会回调 NetworkCallback，
+     * 这里再监听系统 WiFi 状态广播，两条路径靠 SSID 去重。
+     */
+    private val wifiReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            when (intent.action) {
+                WifiManager.WIFI_STATE_CHANGED_ACTION -> {
+                    val state = intent.getIntExtra(
+                        WifiManager.EXTRA_WIFI_STATE,
+                        WifiManager.WIFI_STATE_UNKNOWN
+                    )
+                    if (state == WifiManager.WIFI_STATE_DISABLED) {
+                        wifiNetworks.clear()
+                        handleDisconnect()
+                    }
+                }
+                WifiManager.NETWORK_STATE_CHANGED_ACTION -> {
+                    val info = wifiInfoExtra(intent)
+                    val ssid = WifiSsidReader.sanitize(info?.ssid).ifEmpty { currentSsid() }
+                    if (ssid.isNotEmpty()) {
+                        val id = info?.networkId ?: -1
+                        offer(ssid, if (id >= 0) "id:$id" else null)
+                    }
+                }
             }
         }
     }
 
+    @Suppress("DEPRECATION")
+    private fun wifiInfoExtra(intent: Intent): WifiInfo? =
+        if (Build.VERSION.SDK_INT >= 33) {
+            intent.getParcelableExtra(WifiManager.EXTRA_WIFI_INFO, WifiInfo::class.java)
+        } else {
+            intent.getParcelableExtra(WifiManager.EXTRA_WIFI_INFO)
+        }
+
     override fun start() {
         if (receiverRegistered) return
-        runCatching { connectivityManager?.registerDefaultNetworkCallback(callback) }
+        val request = NetworkRequest.Builder()
+            .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+            .build()
+        runCatching { connectivityManager?.registerNetworkCallback(request, callback) }
+        val filter = IntentFilter().apply {
+            addAction(WifiManager.NETWORK_STATE_CHANGED_ACTION)
+            addAction(WifiManager.WIFI_STATE_CHANGED_ACTION)
+        }
+        runCatching {
+            ContextCompat.registerReceiver(
+                context,
+                wifiReceiver,
+                filter,
+                ContextCompat.RECEIVER_NOT_EXPORTED
+            )
+        }
         receiverRegistered = true
-        wasOnWifi = connectivityManager?.activeNetwork?.let { network ->
-            connectivityManager?.getNetworkCapabilities(network)
-                ?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
-        } == true
+        // 启动时只记录当前状态，不补发信号，避免打开 App 就弹旧提醒。
+        lastSsid = currentSsid()
+        lastToken = connectivityManager?.activeNetwork?.takeIf { network ->
+            connectivityManager.getNetworkCapabilities(network)
+                ?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
+        }
+        wifiNetworks.clear()
+        runCatching {
+            connectivityManager?.allNetworks?.forEach { network ->
+                val capabilities = connectivityManager.getNetworkCapabilities(network)
+                if (capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true) {
+                    wifiNetworks.add(network)
+                }
+            }
+        }
     }
 
     override fun stop() {
         if (!receiverRegistered) return
         runCatching { connectivityManager?.unregisterNetworkCallback(callback) }
+        runCatching { context.unregisterReceiver(wifiReceiver) }
         receiverRegistered = false
+        wifiNetworks.clear()
+        lastSsid = ""
+        lastToken = null
     }
 }
 
