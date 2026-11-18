@@ -1,5 +1,8 @@
 package com.capsulepal.app.ui.screens
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.widget.Toast
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -15,12 +18,14 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import com.capsulepal.app.R
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -32,7 +37,8 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.capsulepal.app.ui.components.CapsuleButton
 
-private val noticeHighlights = listOf("Android16", "本地离线", "任何", "异常高")
+private val noticeHighlights =
+    listOf("Android16", "本地离线", "任何", "异常高", "开源", "完全免费")
 
 /**
  * 用户须知：首次启动必须确认；设置页「关于」里可再次打开。
@@ -52,6 +58,12 @@ fun UserNoticeDialog(
         )
     ) {
         val maxHeight = (LocalConfiguration.current.screenHeightDp * 0.8f).dp
+        val context = LocalContext.current
+        fun copyLink(url: String) {
+            val clipboard = context.getSystemService(ClipboardManager::class.java)
+            clipboard?.setPrimaryClip(ClipData.newPlainText("链接", url))
+            Toast.makeText(context, "链接已复制", Toast.LENGTH_SHORT).show()
+        }
         Surface(
             modifier = Modifier
                 .fillMaxWidth(0.92f)
@@ -102,6 +114,21 @@ fun UserNoticeDialog(
                         text = "2. 为确保能完整使用该应用内的核心功能，" +
                             "请确保您的设备搭载的是Android16及以上的系统版本。"
                     )
+                    Spacer(Modifier.height(14.dp))
+                    NoticeParagraph(
+                        text = "3. 本应用已开源（完全免费），安装包获取方式如下："
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    OpenSourceLinkRow(
+                        label = "GitHub",
+                        url = "https://github.com/Sirius6350/CapsulePal",
+                        onCopy = { copyLink("https://github.com/Sirius6350/CapsulePal") }
+                    )
+                    OpenSourceLinkRow(
+                        label = "Gitee（推荐）",
+                        url = "https://gitee.com/Sirius6350/CapsulePal",
+                        onCopy = { copyLink("https://gitee.com/Sirius6350/CapsulePal") }
+                    )
                     Spacer(Modifier.height(8.dp))
                 }
                 Spacer(Modifier.height(14.dp))
@@ -112,6 +139,36 @@ fun UserNoticeDialog(
                     height = 50.dp
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun OpenSourceLinkRow(
+    label: String,
+    url: String,
+    onCopy: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                text = url,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onBackground
+            )
+        }
+        TextButton(onClick = onCopy) {
+            Text("复制")
         }
     }
 }
