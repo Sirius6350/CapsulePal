@@ -90,6 +90,7 @@ fun PartnerScreen(
     }
     var editingName by remember { mutableStateOf(false) }
     var nameDraft by remember { mutableStateOf(partner.name) }
+    var showTitleLadder by remember { mutableStateOf(false) }
     val shownOutfit = autoOutfit
 
     LazyColumn(
@@ -223,20 +224,6 @@ fun PartnerScreen(
                         modifier = Modifier.weight(1f)
                     )
                 }
-                Spacer(Modifier.height(12.dp))
-                Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant
-                ) {
-                    Text(
-                        text = "每天前 ${state.settings.dailyFullXpCount} 次完成是全额成长，之后会递减；" +
-                            "把完成改回未完成时，该次成长会一并回退。" +
-                            "今天还剩 ${GrowthRules.fullXpRemaining(partner.completedToday, state.settings.dailyFullXpCount)} 次全额。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(12.dp)
-                    )
-                }
             }
         }
 
@@ -269,85 +256,50 @@ fun PartnerScreen(
         }
 
         item {
-            SoftCard {
-                Text(
-                    text = "称号阶梯",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                Spacer(Modifier.height(12.dp))
-                unlocks.forEachIndexed { index, unlock ->
-                    val unlocked = levelInfo.level >= unlock.level
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 7.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(30.dp)
-                                .clip(CircleShape)
-                                .background(
-                                    if (unlocked) {
-                                        MaterialTheme.colorScheme.secondaryContainer
-                                    } else {
-                                        MaterialTheme.colorScheme.surfaceVariant
-                                    }
-                                ),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            if (unlocked) {
-                                Icon(
-                                    painter = painterResource(R.drawable.ic_ui_check),
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.secondary,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            } else {
-                                Icon(
-                                    painter = painterResource(R.drawable.ic_ui_lock),
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                                    modifier = Modifier.size(14.dp)
-                                )
-                            }
-                        }
-                        Spacer(Modifier.width(12.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Lv.${unlock.level} ${unlock.title}",
-                                style = MaterialTheme.typography.bodyMedium.copy(
-                                    fontWeight = if (unlocked) FontWeight.SemiBold else FontWeight.Normal
-                                ),
-                                color = if (unlocked) {
-                                    MaterialTheme.colorScheme.onSurface
-                                } else {
-                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                }
-                            )
-                            Text(
-                                text = unlock.detail,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                    if (index != unlocks.lastIndex) {
-                        Spacer(Modifier.height(2.dp))
-                    }
+            SoftCard(
+                modifier = Modifier.bounceClick(shape = RoundedCornerShape(26.dp)) {
+                    showTitleLadder = true
+                }
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "称号阶梯",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Icon(
+                        painter = painterResource(R.drawable.ic_ui_chevron_right),
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp)
+                    )
                 }
             }
         }
+    }
 
-        item {
-            Text(
-                text = "成长记在真实完成上。把完成改回未完成，对应的成长会一起回退；跳过则不会留下记录。",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 4.dp)
-            )
-        }
+    if (showTitleLadder) {
+        AlertDialog(
+            onDismissRequest = { showTitleLadder = false },
+            title = { Text("称号阶梯") },
+            text = {
+                Column {
+                    unlocks.forEach { unlock ->
+                        UnlockRow(
+                            unlock = unlock,
+                            unlocked = levelInfo.level >= unlock.level
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showTitleLadder = false }) { Text("知道了") }
+            }
+        )
     }
 
     if (editingName) {
@@ -374,6 +326,65 @@ fun PartnerScreen(
                 TextButton(onClick = { editingName = false }) { Text("算了") }
             }
         )
+    }
+}
+
+@Composable
+private fun UnlockRow(unlock: Unlock, unlocked: Boolean) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(30.dp)
+                .clip(CircleShape)
+                .background(
+                    if (unlocked) {
+                        MaterialTheme.colorScheme.secondaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.surfaceVariant
+                    }
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            if (unlocked) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_ui_check),
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.secondary,
+                    modifier = Modifier.size(16.dp)
+                )
+            } else {
+                Icon(
+                    painter = painterResource(R.drawable.ic_ui_lock),
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                    modifier = Modifier.size(14.dp)
+                )
+            }
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "Lv.${unlock.level} ${unlock.title}",
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    fontWeight = if (unlocked) FontWeight.SemiBold else FontWeight.Normal
+                ),
+                color = if (unlocked) {
+                    MaterialTheme.colorScheme.onSurface
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                }
+            )
+            Text(
+                text = unlock.detail,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
     }
 }
 

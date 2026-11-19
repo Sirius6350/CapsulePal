@@ -286,10 +286,10 @@ abstract class BatteryDao {
     @Query("DELETE FROM app_power_records WHERE epochDay = :epochDay")
     abstract suspend fun deleteAppPowerOfDay(epochDay: Long)
 
-    @Query("SELECT * FROM app_power_records WHERE epochDay = :epochDay ORDER BY powerMah DESC")
+    @Query("SELECT * FROM app_power_records WHERE epochDay = :epochDay ORDER BY foregroundMinutes DESC, powerMah DESC")
     abstract suspend fun appPowerOfDay(epochDay: Long): List<AppPowerRecordEntity>
 
-    @Query("SELECT * FROM app_power_records WHERE epochDay >= :fromDay ORDER BY epochDay DESC, powerMah DESC")
+    @Query("SELECT * FROM app_power_records WHERE epochDay >= :fromDay ORDER BY epochDay DESC, foregroundMinutes DESC, powerMah DESC")
     abstract suspend fun appPowerSince(fromDay: Long): List<AppPowerRecordEntity>
 
     @Query("DELETE FROM app_power_records")

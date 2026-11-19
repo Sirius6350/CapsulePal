@@ -493,6 +493,7 @@ class BackupRepository(
         put("dailyFullXpCount", settings.dailyFullXpCount)
         put("dualReminderEnabled", settings.dualReminderEnabled)
         put("ratedCapacityMah", settings.ratedCapacityMah)
+        put("batteryCells", settings.batteryCells)
         put("batteryHighFrequencyAlways", settings.batteryHighFrequencyAlways)
         put("geekSamplingInOtherVersions", settings.geekSamplingInOtherVersions)
         put(
@@ -549,6 +550,7 @@ class BackupRepository(
                 base.dualReminderEnabled
             ),
             ratedCapacityMah = json.optInt("ratedCapacityMah", base.ratedCapacityMah),
+            batteryCells = json.optInt("batteryCells", base.batteryCells).coerceIn(0, 2),
             batteryHighFrequencyAlways = json.optBoolean(
                 "batteryHighFrequencyAlways",
                 base.batteryHighFrequencyAlways

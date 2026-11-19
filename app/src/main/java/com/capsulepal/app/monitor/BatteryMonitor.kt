@@ -34,10 +34,30 @@ data class MonitorState(
     val currentCharge: ChargeSessionView?,
     val lastCharge: ChargeSessionView?,
     val todayChargeCount: Int,
-    val updatedAt: Long
+    val updatedAt: Long,
+    /** 额定容量的真实来源，用于界面标注。 */
+    val ratedSource: CapacitySource = CapacitySource.NONE,
+    /** 实际生效的芯数（1/2）。 */
+    val batteryCells: Int = 1,
+    /** 用户设置：0 自动，1 单芯，2 双芯。 */
+    val batteryCellsSetting: Int = 0,
+    /** 系统原始上报的设计容量（未乘芯数）。 */
+    val systemDesignRawMah: Int? = null,
+    /** 系统上报的设计标称电压。 */
+    val designVoltageMv: Int? = null,
+    /** 系统原始电压（未做双芯校正），供弹窗预览使用。 */
+    val rawVoltageMv: Int? = null,
+    /** 能量节点换算出的等效设计容量，用于双芯判定。 */
+    val energyDesignMah: Int? = null
 ) {
     val chargePowerW: Float?
         get() = BatteryCalc.chargePowerW(reading.voltageMv, reading.currentMa)
+
+    val chargeMethodLabel: String
+        get() = BatteryCalc.describeCharging(reading)
+
+    val technologyLabel: String
+        get() = BatteryCalc.describeTechnology(reading.technology)
 }
 
 /**
@@ -78,6 +98,9 @@ class BatteryMonitor(
     private var geekHighFrequency = false
 
     private var loopJob: Job? = null
+
+    /** 上一次学习到的整包容量；系统未提供设计容量时用它兜底。 */
+    private var learnedCapacityMah: Int? = null
 
     private val powerReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -131,9 +154,23 @@ class BatteryMonitor(
         val geekSampling = settings.version.recordsBatteryTimeline ||
             (settings.geekSamplingInOtherVersions && settings.batteryHighFrequencyAlways)
 
-        val reading = reader.read()
-        val manual = settings.ratedCapacityMah.takeIf { it > 0 }
-        val rated = manual ?: reading.designCapacityMah ?: BatteryCalc.DEFAULT_RATED_MAH
+        val raw = reader.read()
+        val correction = BatteryCalc.resolveCorrection(
+            cellsSetting = settings.batteryCells,
+            rawDesignMah = raw.designCapacityMah,
+            energyDesignMah = raw.energyDesignCapacityMah,
+            voltageMv = raw.voltageMv
+        )
+        // 双芯校正只作用于计算与展示，原始电量百分比等采样保持不动。
+        val reading = BatteryCalc.applyCorrection(raw, correction)
+        val resolution = BatteryCalc.resolveRatedCapacity(
+            correction = correction,
+            designRawMah = raw.designCapacityMah,
+            ratedDesignMah = reading.designCapacityMah,
+            learnedCapacityMah = learnedCapacityMah,
+            manualMah = settings.ratedCapacityMah
+        )
+        val rated = resolution.ratedMah
 
         val snapshot = repository.onReading(
             reading = reading,
@@ -141,6 +178,7 @@ class BatteryMonitor(
             ratedCapacityMah = rated,
             todayStartMillis = BatteryCalc.todayStart(now)
         )
+        learnedCapacityMah = snapshot.learnedCapacityMah ?: learnedCapacityMah
 
         geekRepository.onReading(
             reading = reading,
@@ -156,8 +194,8 @@ class BatteryMonitor(
         _state.value = MonitorState(
             reading = reading,
             ratedCapacityMah = rated,
-            ratedIsAuto = manual == null,
-            systemDesignMah = reading.designCapacityMah,
+            ratedIsAuto = settings.ratedCapacityMah <= 0,
+            systemDesignMah = resolution.designMah,
             fullCapacityMah = fullMah,
             healthPredictionPct = BatteryCalc.healthPercent(fullMah, rated),
             learnedHealthPct = snapshot.learnedHealthPct,
@@ -165,7 +203,14 @@ class BatteryMonitor(
             currentCharge = snapshot.currentCharge,
             lastCharge = snapshot.lastCharge,
             todayChargeCount = snapshot.todayChargeCount,
-            updatedAt = now
+            updatedAt = now,
+            ratedSource = resolution.source,
+            batteryCells = resolution.cells,
+            batteryCellsSetting = settings.batteryCells.coerceIn(0, 2),
+            systemDesignRawMah = resolution.designRawMah,
+            designVoltageMv = raw.designVoltageMv,
+            rawVoltageMv = raw.voltageMv,
+            energyDesignMah = raw.energyDesignCapacityMah
         )
     }
 

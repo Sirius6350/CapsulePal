@@ -63,6 +63,7 @@ class SettingsRepository(context: Context) {
                 acknowledgedTaskId = prefs[Keys.ACK_TASK] ?: 0L,
                 dualReminderEnabled = prefs[Keys.DUAL_REMINDER] ?: false,
                 ratedCapacityMah = prefs[Keys.RATED_CAPACITY] ?: 0,
+                batteryCells = (prefs[Keys.BATTERY_CELLS] ?: 0).coerceIn(0, 2),
                 batteryHighFrequencyAlways = prefs[Keys.BATTERY_HIGH_FREQ] ?: false,
                 geekSamplingInOtherVersions = prefs[Keys.GEEK_SAMPLING_OTHER] ?: false,
                 partnerAppearance = prefs[Keys.PARTNER_APPEARANCE]?.mapNotNull {
@@ -204,6 +205,11 @@ class SettingsRepository(context: Context) {
 
     suspend fun setNoticeAccepted(accepted: Boolean = true) {
         dataStore.edit { it[Keys.NOTICE_ACCEPTED] = accepted }
+    }
+
+    /** 0 自动，1 单芯，2 双芯。 */
+    suspend fun setBatteryCells(cells: Int) {
+        dataStore.edit { it[Keys.BATTERY_CELLS] = cells.coerceIn(0, 2) }
     }
 
     suspend fun setBatteryHighFrequencyAlways(enabled: Boolean) {
@@ -461,6 +467,7 @@ class SettingsRepository(context: Context) {
         val ACK_TASK = longPreferencesKey("acknowledged_task_id")
         val DUAL_REMINDER = booleanPreferencesKey("dual_reminder_enabled")
         val RATED_CAPACITY = intPreferencesKey("rated_capacity_mah")
+        val BATTERY_CELLS = intPreferencesKey("battery_cells")
         val BATTERY_HIGH_FREQ = booleanPreferencesKey("battery_high_frequency_always")
         val GEEK_SAMPLING_OTHER = booleanPreferencesKey("geek_sampling_in_other_versions")
         val PARTNER_APPEARANCE = stringSetPreferencesKey("partner_appearance")
@@ -523,6 +530,7 @@ class SettingsRepository(context: Context) {
             prefs[Keys.DAILY_FULL_XP] = settings.dailyFullXpCount
             prefs[Keys.DUAL_REMINDER] = settings.dualReminderEnabled
             prefs[Keys.RATED_CAPACITY] = settings.ratedCapacityMah
+            prefs[Keys.BATTERY_CELLS] = settings.batteryCells.coerceIn(0, 2)
             // 极客体验期间备份里的旧值也不能把 1 秒采样关掉。
             prefs[Keys.BATTERY_HIGH_FREQ] =
                 if (CapsuleVersion.fromName(prefs[Keys.VERSION]).recordsBatteryTimeline) {

@@ -411,7 +411,10 @@ class GeekRepository(
                 // W × 小时 ÷ 标称电压 → mAh。
                 powerMah = powerW * (minutes / 60f) / NOMINAL_VOLTAGE * 1000f
             )
-        }.sortedByDescending { it.powerMah }.take(MAX_APP_RECORDS)
+        }.sortedWith(
+            compareByDescending<AppPowerRecordEntity> { it.foregroundMinutes }
+                .thenByDescending { it.powerMah }
+        ).take(MAX_APP_RECORDS)
         if (records.isEmpty()) return
 
         dao.deleteAppPowerOfDay(today)

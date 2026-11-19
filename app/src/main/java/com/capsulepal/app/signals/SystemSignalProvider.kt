@@ -30,7 +30,7 @@ class SystemSignalProvider(
 
     private val power = PowerSignalSource(context, emit)
     private val headset = HeadsetSignalSource(context, emit)
-    private val wifi = WifiSignalSource(context, emit)
+    private val wifi = WifiSignalSource(context, scope, emit)
     private val bluetooth = BluetoothSignalSource(context, scope, emit)
     private val call = CallSignalSource(context, emit)
     private val appUsage = AppUsageSignalSource(context, scope, emit)

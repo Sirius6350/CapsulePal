@@ -306,6 +306,8 @@ data class AppSettings(
     val dualReminderEnabled: Boolean = false,
     /** 额定容量（mAh）；0 表示自动读取系统设计容量，读不到时回落 5000。 */
     val ratedCapacityMah: Int = 0,
+    /** 电池芯数：0 自动，1 单芯，2 双芯（系统只上报单芯容量时按双芯校正）。 */
+    val batteryCells: Int = 0,
     /** 打开后放电状态也保持 1 秒一次的高频监测。 */
     val batteryHighFrequencyAlways: Boolean = false,
     /** 非极客版也同步记录极客体验数据（采样、充放电会话、应用功耗）。 */

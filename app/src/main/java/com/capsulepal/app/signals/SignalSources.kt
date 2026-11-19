@@ -23,6 +23,7 @@ import android.os.BatteryManager
 import android.os.Build
 import android.os.PowerManager
 import android.os.Process
+import android.os.SystemClock
 import android.provider.CalendarContract
 import android.telephony.TelephonyCallback
 import android.telephony.TelephonyManager
@@ -165,6 +166,7 @@ object WifiSsidReader {
 
 class WifiSignalSource(
     context: Context,
+    private val scope: CoroutineScope,
     private val emit: (SystemSignal) -> Unit
 ) : SignalSource(context) {
 
@@ -178,8 +180,42 @@ class WifiSignalSource(
     /** 上一次识别到的 WiFi 标识，名称不可读时用它区分是不是换了一个网络。 */
     @Volatile
     private var lastToken: Any? = null
+    /** 上一次带名称发出连接信号的时间，用于识别「连回同一个 WiFi」。 */
+    @Volatile
+    private var lastEmitAt = 0L
+
+    /** 名称暂时读不到时的补读任务。 */
+    private var ssidRetryJob: Job? = null
+    /** 低频兜底轮询：部分 ROM 会吞掉回调或广播，SSID 也可能连接后过一会儿才可读。 */
+    private var pollJob: Job? = null
+
+    /**
+     * 启动时已经连着、但名称当时读不出来的网络。
+     * 它第一次成功读出名称只补基线、不补提醒，避免打开 App 就弹旧提醒。
+     */
+    private var baselineToken: Any? = null
 
     private fun currentSsid(): String = WifiSsidReader.currentSsid(context)
+
+    /** 当前活动的 WiFi 网络；VPN 等场景下活动网络不是 WiFi 时，取任意已连接的 WiFi。 */
+    private fun connectedWifiNetwork(): Network? {
+        val manager = connectivityManager ?: return null
+        val active = manager.activeNetwork
+        if (active != null) {
+            val capabilities = runCatching {
+                manager.getNetworkCapabilities(active)
+            }.getOrNull()
+            if (capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true) {
+                return active
+            }
+        }
+        return runCatching {
+            manager.allNetworks.firstOrNull { network ->
+                manager.getNetworkCapabilities(network)
+                    ?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
+            }
+        }.getOrNull()
+    }
 
     private fun ssidOf(network: Network): String {
         val capabilities = runCatching {
@@ -201,30 +237,95 @@ class WifiSignalSource(
     private fun offer(ssidRaw: String?, token: Any?) {
         val ssid = WifiSsidReader.sanitize(ssidRaw)
         if (ssid.isNotEmpty()) {
+            val now = SystemClock.elapsedRealtime()
             if (ssid == lastSsid) {
-                if (token != null) lastToken = token
+                // 名称没变但网络标识变了：多半是断开后又连回同一个 WiFi。
+                // 一次连接会同时走回调和广播两条路，间隔很短的变化不当成重连。
+                val switched = token != null && lastToken != null && token != lastToken
+                if (switched && now - lastEmitAt >= SAME_SSID_REEMIT_GAP_MILLIS) {
+                    lastToken = token
+                    lastEmitAt = now
+                    emit(SystemSignal(SignalType.WIFI_CONNECTED, detail = ssid))
+                } else if (token != null) {
+                    lastToken = token
+                }
+                baselineToken = null
+                return
+            }
+            if (token != null && token == baselineToken) {
+                // 启动时就已连着这个网络，只是名称晚了一点才读出来：补基线，不补提醒。
+                lastSsid = ssid
+                lastToken = token
+                baselineToken = null
                 return
             }
             lastSsid = ssid
             lastToken = token
+            baselineToken = null
+            lastEmitAt = now
             emit(SystemSignal(SignalType.WIFI_CONNECTED, detail = ssid))
             return
         }
         if (token != null && token != lastToken) {
             lastToken = token
             lastSsid = ""
+            lastEmitAt = SystemClock.elapsedRealtime()
             emit(SystemSignal(SignalType.WIFI_CONNECTED))
+        }
+    }
+
+    /**
+     * 连接事件到达时 SSID 不一定已经写进 WifiInfo（部分 ROM 会晚几百毫秒到几秒）。
+     * 先补读几次，读到了按真实名称发送；一直读不到才退化成不带名称的连接信号，
+     * 否则「连接指定 WiFi」的规则会被误判成条件不匹配。
+     */
+    private fun offerWithRetry(ssidRaw: String?, token: Any?) {
+        val ssid = WifiSsidReader.sanitize(ssidRaw).ifEmpty { currentSsid() }
+        if (ssid.isNotEmpty()) {
+            ssidRetryJob?.cancel()
+            offer(ssid, token)
+            return
+        }
+        // 同一个连接会连续触发多条回调，已有补读任务时不要反复推迟兜底信号。
+        if (ssidRetryJob?.isActive == true) return
+        ssidRetryJob = scope.launch {
+            for (delayMillis in SSID_RETRY_DELAYS) {
+                delay(delayMillis)
+                val retried = currentSsid()
+                if (retried.isNotEmpty()) {
+                    offer(retried, token)
+                    return@launch
+                }
+            }
+            // 名称确实读不到时仍发一次连接信号，保证「任意 WiFi」规则还能触发。
+            offer("", token)
+        }
+    }
+
+    /** 15 秒轮询兜底：回调/广播被 ROM 吞掉、或名称稍后才可读时，靠它补发。 */
+    private fun startPolling() {
+        if (pollJob != null) return
+        pollJob = scope.launch {
+            while (isActive) {
+                delay(SSID_POLL_INTERVAL_MILLIS)
+                val network = connectedWifiNetwork() ?: continue
+                val ssid = currentSsid()
+                if (ssid.isNotEmpty()) offer(ssid, network)
+            }
         }
     }
 
     private fun offerNetwork(network: Network) {
         val ssid = ssidOf(network).takeIf { it.isNotEmpty() } ?: currentSsid()
-        offer(ssid, network)
+        offerWithRetry(ssid, network)
     }
 
     @Synchronized
     private fun handleDisconnect() {
         if (wifiNetworks.isNotEmpty()) return
+        ssidRetryJob?.cancel()
+        ssidRetryJob = null
+        baselineToken = null
         val hadWifi = lastSsid.isNotEmpty() || lastToken != null
         lastSsid = ""
         lastToken = null
@@ -272,10 +373,15 @@ class WifiSignalSource(
                 }
                 WifiManager.NETWORK_STATE_CHANGED_ACTION -> {
                     val info = wifiInfoExtra(intent)
-                    val ssid = WifiSsidReader.sanitize(info?.ssid).ifEmpty { currentSsid() }
+                    val ssid = WifiSsidReader.sanitize(info?.ssid)
+                    val network = connectedWifiNetwork()
+                    val id = info?.networkId ?: -1
+                    val token = network ?: if (id >= 0) "id:$id" else null
                     if (ssid.isNotEmpty()) {
-                        val id = info?.networkId ?: -1
-                        offer(ssid, if (id >= 0) "id:$id" else null)
+                        offer(ssid, token)
+                    } else if (network != null) {
+                        // 已确认连着 WiFi，只是名称还没可读：补读几次再决定发什么。
+                        offerWithRetry("", token)
                     }
                 }
             }
@@ -292,6 +398,13 @@ class WifiSignalSource(
 
     override fun start() {
         if (receiverRegistered) return
+        // 先建立基线，再注册监听：注册瞬间可能立刻回调当前已连接的网络，
+        // 基线还是空的话会把「本来就连着」误判成刚连接并弹提醒。
+        lastSsid = currentSsid()
+        val connected = connectedWifiNetwork()
+        lastToken = connected
+        baselineToken = connected.takeIf { lastSsid.isEmpty() }
+
         val request = NetworkRequest.Builder()
             .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
             .build()
@@ -309,12 +422,6 @@ class WifiSignalSource(
             )
         }
         receiverRegistered = true
-        // 启动时只记录当前状态，不补发信号，避免打开 App 就弹旧提醒。
-        lastSsid = currentSsid()
-        lastToken = connectivityManager?.activeNetwork?.takeIf { network ->
-            connectivityManager.getNetworkCapabilities(network)
-                ?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
-        }
         wifiNetworks.clear()
         runCatching {
             connectivityManager?.allNetworks?.forEach { network ->
@@ -324,16 +431,33 @@ class WifiSignalSource(
                 }
             }
         }
+        startPolling()
     }
 
     override fun stop() {
         if (!receiverRegistered) return
         runCatching { connectivityManager?.unregisterNetworkCallback(callback) }
         runCatching { context.unregisterReceiver(wifiReceiver) }
+        pollJob?.cancel()
+        pollJob = null
+        ssidRetryJob?.cancel()
+        ssidRetryJob = null
         receiverRegistered = false
         wifiNetworks.clear()
         lastSsid = ""
         lastToken = null
+        baselineToken = null
+    }
+
+    private companion object {
+        /** 连接后补读 SSID 的间隔（累加约 4.6 秒）。 */
+        val SSID_RETRY_DELAYS = longArrayOf(400L, 1_200L, 3_000L)
+
+        /** 回调/广播都失效时的兜底轮询间隔。 */
+        const val SSID_POLL_INTERVAL_MILLIS = 15_000L
+
+        /** 同一 SSID 短时间内的网络标识变化视为双通道重复，不重复提醒。 */
+        const val SAME_SSID_REEMIT_GAP_MILLIS = 3_000L
     }
 }
 

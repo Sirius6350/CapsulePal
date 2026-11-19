@@ -203,6 +203,7 @@ fun AppRoot(
                         version = version,
                         geek = geek,
                         onSetRatedCapacity = vm::setRatedCapacity,
+                        onSetBatteryCells = vm::setBatteryCells,
                         onRefresh = vm::refreshMonitor,
                         onRefreshGeek = vm::refreshGeek,
                         onResetLearning = vm::resetBatteryLearning

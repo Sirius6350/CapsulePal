@@ -956,6 +956,14 @@ class CapsuleViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    /** 0 自动，1 单芯，2 双芯。 */
+    fun setBatteryCells(cells: Int) {
+        viewModelScope.launch {
+            container.settingsRepository.setBatteryCells(cells)
+            container.batteryMonitor.poke()
+        }
+    }
+
     fun setBatteryHighFrequencyAlways(enabled: Boolean) {
         viewModelScope.launch {
             // 极客体验锁定 1 秒采样：这里再兜一层，防止误关。

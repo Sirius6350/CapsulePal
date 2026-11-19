@@ -14,7 +14,9 @@ data class BatterySessionSnapshot(
     val lastCharge: ChargeSessionView?,
     val todayChargeCount: Int,
     val learnedHealthPct: Float?,
-    val learnedSamples: Int
+    val learnedSamples: Int,
+    /** 由学习样本推算的整包容量，系统读不到设计容量时作为兜底。 */
+    val learnedCapacityMah: Int? = null
 )
 
 /**
@@ -38,7 +40,8 @@ class BatteryRepository(private val dao: BatteryDao) {
         val lastCharge: ChargeSessionView?,
         val todayCount: Int,
         val learnedHealthPct: Float?,
-        val learnedSamples: Int
+        val learnedSamples: Int,
+        val learnedCapacityMah: Int?
     )
 
     suspend fun onReading(
@@ -86,7 +89,8 @@ class BatteryRepository(private val dao: BatteryDao) {
             lastCharge = cached.lastCharge,
             todayChargeCount = cached.todayCount,
             learnedHealthPct = cached.learnedHealthPct,
-            learnedSamples = cached.learnedSamples
+            learnedSamples = cached.learnedSamples,
+            learnedCapacityMah = cached.learnedCapacityMah
         )
     }
 
@@ -148,27 +152,42 @@ class BatteryRepository(private val dao: BatteryDao) {
                 endPct = closed.endPct
             )
         }
-        val samples = dao.recentHealthRecords(BatteryCalc.MAX_LEARNING_SAMPLES)
-            .mapNotNull { record ->
-                val health = BatteryCalc.healthPercentForSample(
-                    estimator = record.estimator,
-                    startMah = record.startMah,
-                    startPct = record.startPct,
-                    endMah = record.endMah,
-                    endPct = record.endPct,
-                    ratedMah = ratedCapacityMah
-                ) ?: return@mapNotNull null
-                // 明显失真的样本（额定容量填错、电量跳变）不参与学习。
-                if (health !in 20f..150f) return@mapNotNull null
-                BatteryCalc.HealthSample(health, record.weight)
+        val records = dao.recentHealthRecords(BatteryCalc.MAX_LEARNING_SAMPLES)
+        val samples = records.mapNotNull { record ->
+            val health = BatteryCalc.healthPercentForSample(
+                estimator = record.estimator,
+                startMah = record.startMah,
+                startPct = record.startPct,
+                endMah = record.endMah,
+                endPct = record.endPct,
+                ratedMah = ratedCapacityMah
+            ) ?: return@mapNotNull null
+            // 明显失真的样本（额定容量填错、电量跳变）不参与学习。
+            if (health !in 20f..150f) return@mapNotNull null
+            BatteryCalc.HealthSample(health, record.weight)
+        }
+        // 容量估算只依赖 mAh 增量，不需要额定容量，可直接作为「学习估算」兜底。
+        val capacitySamples = records.mapNotNull { record ->
+            val capacity = BatteryCalc.capacityForSample(
+                estimator = record.estimator,
+                startMah = record.startMah,
+                startPct = record.startPct,
+                endMah = record.endMah,
+                endPct = record.endPct
+            ) ?: return@mapNotNull null
+            if (capacity !in BatteryCalc.MIN_CAPACITY_MAH..BatteryCalc.MAX_CAPACITY_MAH) {
+                return@mapNotNull null
             }
+            BatteryCalc.CapacitySample(capacity, record.weight)
+        }
         return BaseSnapshot(
             todayStart = todayStartMillis,
             ratedMah = ratedCapacityMah,
             lastCharge = last,
             todayCount = dao.chargeCountSince(todayStartMillis),
             learnedHealthPct = BatteryCalc.weightedHealth(samples),
-            learnedSamples = samples.size
+            learnedSamples = samples.size,
+            learnedCapacityMah = BatteryCalc.weightedCapacity(capacitySamples)
         )
     }
 

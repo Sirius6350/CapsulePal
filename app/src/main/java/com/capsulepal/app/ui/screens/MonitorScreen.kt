@@ -31,6 +31,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.capsulepal.app.data.model.CapsuleVersion
 import com.capsulepal.app.monitor.BatteryCalc
+import com.capsulepal.app.monitor.CapacitySource
 import com.capsulepal.app.monitor.MonitorState
 import com.capsulepal.app.ui.GeekUiState
 import com.capsulepal.app.ui.components.InlineStat
@@ -51,6 +52,7 @@ fun MonitorScreen(
     version: CapsuleVersion,
     geek: GeekUiState,
     onSetRatedCapacity: (Int) -> Unit,
+    onSetBatteryCells: (Int) -> Unit,
     onRefresh: () -> Unit,
     onRefreshGeek: () -> Unit,
     onResetLearning: () -> Unit
@@ -74,23 +76,11 @@ fun MonitorScreen(
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         item {
-            Column {
-                Text(
-                    text = "监测",
-                    style = MaterialTheme.typography.headlineLarge,
-                    color = MaterialTheme.colorScheme.onBackground
-                )
-                Spacer(Modifier.height(3.dp))
-                Text(
-                    text = if (geekMode) {
-                        "充放电均按 1 秒采样；1 小时曲线只保存在内存里。"
-                    } else {
-                        "充电时每 1 秒采样一次，放电时与通知轮询同为 60 秒。"
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
+            Text(
+                text = "监测",
+                style = MaterialTheme.typography.headlineLarge,
+                color = MaterialTheme.colorScheme.onBackground
+            )
         }
 
         if (geekMode) {
@@ -104,7 +94,7 @@ fun MonitorScreen(
         }
 
         item {
-            RealtimeCard(state = state, geekMode = geekMode)
+            RealtimeCard(state = state)
         }
 
         item {
@@ -207,9 +197,15 @@ fun MonitorScreen(
         RatedCapacityDialog(
             ratedIsAuto = state.ratedIsAuto,
             ratedCapacityMah = state.ratedCapacityMah,
-            systemDesignMah = state.systemDesignMah,
+            systemDesignRawMah = state.systemDesignRawMah,
+            designVoltageMv = state.designVoltageMv,
+            rawVoltageMv = state.rawVoltageMv,
+            energyDesignMah = state.energyDesignMah,
+            batteryCellsSetting = state.batteryCellsSetting,
+            ratedSource = state.ratedSource,
             onDismiss = { showRatedDialog = false },
-            onConfirm = { mah ->
+            onConfirm = { mah, cells ->
+                onSetBatteryCells(cells)
                 onSetRatedCapacity(mah)
                 showRatedDialog = false
             }
@@ -366,10 +362,18 @@ private fun HealthCard(
                 Spacer(Modifier.height(6.dp))
                 Text(
                     text = state?.let {
-                        when {
-                            !it.ratedIsAuto -> "额定 ${it.ratedCapacityMah} mAh · 手动"
-                            it.systemDesignMah != null -> "额定 ${it.ratedCapacityMah} mAh · 系统设计"
-                            else -> "额定 ${it.ratedCapacityMah} mAh · 默认值（未读到系统容量）"
+                        val cells = if (it.batteryCells == 2) " · 双芯" else ""
+                        when (it.ratedSource) {
+                            CapacitySource.MANUAL -> "额定 ${it.ratedCapacityMah} mAh · 手动"
+                            CapacitySource.SYSTEM ->
+                                "额定 ${it.ratedCapacityMah} mAh · 系统设计" +
+                                    if (it.batteryCells == 2) " · 双芯整包" else ""
+                            CapacitySource.SINGLE_CELL ->
+                                "额定 ${it.ratedCapacityMah} mAh · 单芯校正$cells"
+                            CapacitySource.LEARNED ->
+                                "额定 ${it.ratedCapacityMah} mAh · 学习估算"
+                            CapacitySource.NONE ->
+                                "额定 ${it.ratedCapacityMah} mAh · 系统未提供（暂估）"
                         }
                     } ?: "额定容量 --",
                     style = MaterialTheme.typography.bodySmall,
@@ -387,7 +391,7 @@ private fun HealthCard(
                     enabled = state != null,
                     contentPadding = PaddingValues(horizontal = 0.dp)
                 ) {
-                    Text("修改额定容量", style = MaterialTheme.typography.labelMedium)
+                    Text("电池容量与芯数", style = MaterialTheme.typography.labelMedium)
                 }
             }
         }
@@ -395,7 +399,7 @@ private fun HealthCard(
 }
 
 @Composable
-private fun RealtimeCard(state: MonitorState?, geekMode: Boolean) {
+private fun RealtimeCard(state: MonitorState?) {
     val reading = state?.reading
     SoftCard {
         Text(
@@ -446,16 +450,19 @@ private fun RealtimeCard(state: MonitorState?, geekMode: Boolean) {
                 modifier = Modifier.weight(1f)
             )
         }
-        if (reading?.charging == false) {
-            Spacer(Modifier.height(8.dp))
-            Text(
-                text = if (geekMode) {
-                    "极客版充放电均为 1 秒采样，数据同时写入 24 小时曲线。"
-                } else {
-                    "放电状态为低频采样；可在设置里打开「始终保持高频次监测轮询」。"
-                },
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+        StatDivider()
+        Row(modifier = Modifier.fillMaxWidth()) {
+            StatCell(
+                label = "充电方式",
+                value = state?.chargeMethodLabel ?: "--",
+                modifier = Modifier.weight(1f),
+                small = true
+            )
+            StatCell(
+                label = "电池技术",
+                value = state?.technologyLabel ?: "--",
+                modifier = Modifier.weight(1f),
+                small = true
             )
         }
     }
@@ -554,15 +561,23 @@ private fun LearningCard(state: MonitorState?, onResetLearning: () -> Unit) {
 private fun StatCell(
     label: String,
     value: String,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    small: Boolean = false
 ) {
     Column(modifier = modifier) {
         Text(
             text = value,
-            style = MaterialTheme.typography.titleMedium.copy(
-                fontWeight = FontWeight.SemiBold,
-                fontFeatureSettings = "tnum"
-            ),
+            style = if (small) {
+                MaterialTheme.typography.bodyMedium.copy(
+                    fontWeight = FontWeight.Medium,
+                    fontFeatureSettings = "tnum"
+                )
+            } else {
+                MaterialTheme.typography.titleMedium.copy(
+                    fontWeight = FontWeight.SemiBold,
+                    fontFeatureSettings = "tnum"
+                )
+            },
             color = MaterialTheme.colorScheme.onSurface
         )
         Spacer(Modifier.height(2.dp))

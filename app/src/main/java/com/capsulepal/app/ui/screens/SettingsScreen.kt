@@ -291,12 +291,6 @@ fun SettingsScreen(
                         style = MaterialTheme.typography.headlineLarge,
                         color = MaterialTheme.colorScheme.onBackground
                     )
-                    Spacer(Modifier.height(3.dp))
-                    Text(
-                        text = "版本、提醒、权限与本地数据。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
                 }
             }
             item {
@@ -1221,12 +1215,6 @@ private fun IslandChannelGroup(
                 }
             }
         }
-        Spacer(Modifier.height(12.dp))
-        Text(
-            text = "模拟 1 分钟准备 + 1 分钟进行，不计成长与待办进度。",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
         Spacer(Modifier.height(12.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             CapsuleButton(
