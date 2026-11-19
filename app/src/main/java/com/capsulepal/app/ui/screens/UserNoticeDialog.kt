@@ -1,8 +1,7 @@
 package com.capsulepal.app.ui.screens
 
-import android.content.ClipData
-import android.content.ClipboardManager
-import android.widget.Toast
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -36,6 +35,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.capsulepal.app.ui.components.CapsuleButton
+import com.capsulepal.app.ui.openSafely
 
 private val noticeHighlights =
     listOf("Android16", "本地离线", "任何", "异常高", "开源", "完全免费")
@@ -59,10 +59,8 @@ fun UserNoticeDialog(
     ) {
         val maxHeight = (LocalConfiguration.current.screenHeightDp * 0.8f).dp
         val context = LocalContext.current
-        fun copyLink(url: String) {
-            val clipboard = context.getSystemService(ClipboardManager::class.java)
-            clipboard?.setPrimaryClip(ClipData.newPlainText("链接", url))
-            Toast.makeText(context, "链接已复制", Toast.LENGTH_SHORT).show()
+        fun openLink(url: String) {
+            openSafely(context, Intent(Intent.ACTION_VIEW, Uri.parse(url)))
         }
         Surface(
             modifier = Modifier
@@ -122,12 +120,12 @@ fun UserNoticeDialog(
                     OpenSourceLinkRow(
                         label = "GitHub",
                         url = "https://github.com/Sirius6350/CapsulePal",
-                        onCopy = { copyLink("https://github.com/Sirius6350/CapsulePal") }
+                        onOpen = { openLink("https://github.com/Sirius6350/CapsulePal") }
                     )
                     OpenSourceLinkRow(
                         label = "Gitee（推荐）",
                         url = "https://gitee.com/Sirius6350/CapsulePal",
-                        onCopy = { copyLink("https://gitee.com/Sirius6350/CapsulePal") }
+                        onOpen = { openLink("https://gitee.com/Sirius6350/CapsulePal") }
                     )
                     Spacer(Modifier.height(8.dp))
                 }
@@ -147,7 +145,7 @@ fun UserNoticeDialog(
 private fun OpenSourceLinkRow(
     label: String,
     url: String,
-    onCopy: () -> Unit
+    onOpen: () -> Unit
 ) {
     Row(
         modifier = Modifier
@@ -167,8 +165,8 @@ private fun OpenSourceLinkRow(
                 color = MaterialTheme.colorScheme.onBackground
             )
         }
-        TextButton(onClick = onCopy) {
-            Text("复制")
+        TextButton(onClick = onOpen) {
+            Text("跳转")
         }
     }
 }

@@ -29,6 +29,7 @@ import androidx.compose.foundation.interaction.InteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -71,6 +72,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -108,6 +110,7 @@ import com.capsulepal.app.R
 import com.capsulepal.app.data.model.CategoryCatalog
 import com.capsulepal.app.data.model.CategoryEntry
 import com.capsulepal.app.data.model.CapsuleVersion
+import com.capsulepal.app.notifier.ValidationResult
 import com.capsulepal.app.data.model.OverduePolicy
 import com.capsulepal.app.data.model.TaskCategory
 import com.capsulepal.app.data.model.iconRes
@@ -140,6 +143,14 @@ import kotlinx.coroutines.launch
 import kotlin.math.floor
 import kotlin.math.roundToInt
 
+private const val SETTINGS_HOME = 0
+private const val SETTINGS_DATA = 2
+private const val SETTINGS_KEEPALIVE = 3
+private const val SETTINGS_OTHER = 4
+private const val SETTINGS_ABOUT = 5
+
+private const val GITEE_REPO_URL = "https://gitee.com/Sirius6350/CapsulePal"
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
@@ -164,6 +175,7 @@ fun SettingsScreen(
     var showClearPastDialog by remember { mutableStateOf(false) }
     var showClearAllDialog by remember { mutableStateOf(false) }
     var showVersionDialog by remember { mutableStateOf(false) }
+    var settingsPage by rememberSaveable { mutableStateOf(SETTINGS_HOME) }
     var pendingVersion by remember(settings.version) { mutableStateOf(settings.version) }
     val pastTaskCount by vm.pastTaskCount.collectAsStateWithLifecycle()
     var overlayAlphaValue by remember(settings.overlayAlphaSafe) {
@@ -174,6 +186,8 @@ fun SettingsScreen(
         settings.version.showSchedulePage ||
         settings.version.showScheduleEntry ||
         settings.version.showPlansPage
+
+    BackHandler(enabled = settingsPage != SETTINGS_HOME) { settingsPage = SETTINGS_HOME }
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -250,11 +264,159 @@ fun SettingsScreen(
         contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 40.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        item {
-            Column {
-                if (onBack != null) {
+        if (settingsPage == SETTINGS_HOME) {
+            item {
+                Column {
+                    if (onBack != null) {
+                        TextButton(
+                            onClick = onBack,
+                            contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp)
+                        ) {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_ui_back),
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                text = "返回",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    Text(
+                        text = "设置",
+                        style = MaterialTheme.typography.headlineLarge,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+                    Spacer(Modifier.height(3.dp))
+                    Text(
+                        text = "版本、提醒、权限与本地数据。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            item {
+                VersionCard(
+                    version = settings.version,
+                    onClick = {
+                        pendingVersion = settings.version
+                        showVersionDialog = true
+                    }
+                )
+            }
+            if (settings.version.showReminders) {
+                item {
+                    SettingsGroup(title = "提醒") {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .bounceClick(
+                                    shape = RoundedCornerShape(18.dp),
+                                    onClick = onOpenReminderRules
+                                )
+                                .padding(vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_ui_sparkle),
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(22.dp)
+                            )
+                            Spacer(Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "主动提醒规则",
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = "按 WiFi、蓝牙、充电、日历、应用等情境自动提醒",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Pill(
+                                text = "$reminderRuleCount 条开启",
+                                color = MintSoft,
+                                contentColor = Mint
+                            )
+                            Icon(
+                                painter = painterResource(R.drawable.ic_ui_chevron_right),
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier
+                                    .padding(start = 4.dp)
+                                    .size(18.dp)
+                            )
+                        }
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        SettingSwitchRow(
+                            title = "灵动岛之外再发一条通知",
+                            description = "避免错过，结束后自动收起",
+                            checked = settings.dualReminderEnabled,
+                            onCheckedChange = vm::setDualReminder
+                        )
+                        if (settings.dualReminderEnabled && !permissions.notifications) {
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                            PermissionRow(
+                                iconRes = R.drawable.ic_ui_bell,
+                                title = "通知权限",
+                                description = "未授权时第二条通知不会出现，只保留灵动岛",
+                                granted = false,
+                                actionLabel = "去开启",
+                                onClick = {
+                                    if (Build.VERSION.SDK_INT >= 33) {
+                                        notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                    } else {
+                                        openSafely(context, appDetailsIntent(context))
+                                    }
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+            item {
+                SettingsNavCard {
+                    HomeNavRow(
+                        iconRes = R.drawable.ic_ui_database,
+                        title = "数据与备份",
+                        detail = "本地备份、清理与判定",
+                        onClick = { settingsPage = SETTINGS_DATA }
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    HomeNavRow(
+                        iconRes = R.drawable.ic_ui_shield,
+                        title = "保活与权限",
+                        detail = "保活通道、电池监测与权限引导",
+                        onClick = { settingsPage = SETTINGS_KEEPALIVE }
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    HomeNavRow(
+                        iconRes = R.drawable.ic_settings,
+                        title = "其他设置",
+                        detail = "分类编辑与成长节奏",
+                        onClick = { settingsPage = SETTINGS_OTHER }
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    HomeNavRow(
+                        iconRes = R.drawable.ic_capsule,
+                        title = "关于应用",
+                        detail = "应用信息、开源组件与数据隐私",
+                        onClick = { settingsPage = SETTINGS_ABOUT }
+                    )
+                }
+            }
+        } else {
+            item {
+                Column {
                     TextButton(
-                        onClick = onBack,
+                        onClick = { settingsPage = SETTINGS_HOME },
                         contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp)
                     ) {
                         Icon(
@@ -270,32 +432,20 @@ fun SettingsScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+                    Text(
+                        text = when (settingsPage) {
+                            SETTINGS_DATA -> "数据与备份"
+                            SETTINGS_KEEPALIVE -> "保活与权限"
+                            SETTINGS_OTHER -> "其他设置"
+                            else -> "关于应用"
+                        },
+                        style = MaterialTheme.typography.headlineLarge,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
                 }
-                Text(
-                    text = "设置",
-                    style = MaterialTheme.typography.headlineLarge,
-                    color = MaterialTheme.colorScheme.onBackground
-                )
-                Spacer(Modifier.height(3.dp))
-                Text(
-                    text = "版本、提醒、权限与本地数据。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
             }
         }
-        item {
-            VersionCard(
-                version = settings.version,
-                onClick = {
-                    pendingVersion = settings.version
-                    showVersionDialog = true
-                }
-            )
-        }
-        item {
-            SettingsSectionHeader("备份")
-        }
+        if (settingsPage == SETTINGS_DATA) {
         item {
             SettingsGroup(title = "本地备份") {
                 Column {
@@ -337,9 +487,6 @@ fun SettingsScreen(
                     )
                 }
             }
-        }
-        item {
-            SettingsSectionHeader("数据维护")
         }
         item {
             SettingsGroup(title = if (hasTaskModules) "清理与判定" else "本机数据") {
@@ -395,187 +542,9 @@ fun SettingsScreen(
                 )
             }
         }
-        if (settings.version.showReminders) {
+        }
+        if (settingsPage == SETTINGS_KEEPALIVE) {
             item {
-                SettingsSectionHeader("提醒")
-            }
-            item {
-                SettingsGroup(title = "上岛通道") {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = "实况通知",
-                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-                        color = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.weight(1f)
-                    )
-                    val result = validation
-                    if (result == null) {
-                        Pill(
-                            text = "待校验",
-                            color = MaterialTheme.colorScheme.surfaceVariant,
-                            contentColor = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    } else if (result.eligible) {
-                        Pill(text = "可上岛", color = MintSoft, contentColor = Mint)
-                    } else {
-                        Pill(text = "将降级", color = Coral.copy(alpha = 0.14f), contentColor = Coral)
-                    }
-                }
-                val result = validation
-                if (result != null && !result.eligible) {
-                    Spacer(Modifier.height(8.dp))
-                    Surface(
-                        shape = MaterialTheme.shapes.medium,
-                        color = MaterialTheme.colorScheme.surfaceVariant
-                    ) {
-                        Column(modifier = Modifier.padding(10.dp)) {
-                            result.reasons.take(4).forEach { reason ->
-                                Text(
-                                    text = "· $reason",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                    }
-                }
-                Spacer(Modifier.height(12.dp))
-                Text(
-                    text = "模拟 1 分钟准备 + 1 分钟进行，不计成长与待办进度。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(Modifier.height(12.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    CapsuleButton(
-                        text = "上岛测试",
-                        onClick = vm::startIslandTest,
-                        modifier = Modifier.weight(1f),
-                        height = 46.dp
-                    )
-                    CapsuleButton(
-                        text = "刷新当前",
-                        onClick = vm::refreshNotificationsNow,
-                        modifier = Modifier.weight(1f),
-                        filled = false,
-                        height = 46.dp
-                    )
-                }
-                if (now - testStartedAt in 0L..125_000L) {
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        text = "测试进行中，结束后自动收起。",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
-                Spacer(Modifier.height(4.dp))
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .bounceClick(shape = RoundedCornerShape(14.dp)) {
-                            vm.refreshPermissionsState()
-                            Toast.makeText(context, "已重新调度全部提醒", Toast.LENGTH_SHORT).show()
-                        }
-                        .padding(vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "重新调度全部提醒",
-                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Text(
-                            text = "按当前权限重新排一遍提醒与监听",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Icon(
-                        painter = painterResource(R.drawable.ic_ui_chevron_right),
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-        }
-        item {
-            SettingsGroup(title = "更多提醒") {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .bounceClick(
-                            shape = RoundedCornerShape(18.dp),
-                            onClick = onOpenReminderRules
-                        )
-                        .padding(vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_ui_sparkle),
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(22.dp)
-                    )
-                    Spacer(Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "主动提醒规则",
-                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Text(
-                            text = "按 WiFi、蓝牙、充电、日历、应用等情境自动提醒",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Pill(
-                        text = "$reminderRuleCount 条开启",
-                        color = MintSoft,
-                        contentColor = Mint
-                    )
-                    Icon(
-                        painter = painterResource(R.drawable.ic_ui_chevron_right),
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier
-                            .padding(start = 4.dp)
-                            .size(18.dp)
-                    )
-                }
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                SettingSwitchRow(
-                    title = "灵动岛之外再发一条通知",
-                    description = "避免错过，结束后自动收起",
-                    checked = settings.dualReminderEnabled,
-                    onCheckedChange = vm::setDualReminder
-                )
-                if (settings.dualReminderEnabled && !permissions.notifications) {
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                    PermissionRow(
-                        iconRes = R.drawable.ic_ui_bell,
-                        title = "通知权限",
-                        description = "未授权时第二条通知不会出现，只保留灵动岛",
-                        granted = false,
-                        actionLabel = "去开启",
-                        onClick = {
-                            if (Build.VERSION.SDK_INT >= 33) {
-                                notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                            } else {
-                                openSafely(context, appDetailsIntent(context))
-                            }
-                        }
-                    )
-                }
-            }
-        }
-        }
-        item {
-            SettingsSectionHeader("后台与权限")
-        }
-        item {
             SettingsGroup(title = "保活通道") {
                 SettingSwitchRow(
                     title = "后台保持陪伴",
@@ -696,9 +665,21 @@ fun SettingsScreen(
                 )
             }
         }
-        item {
-            SettingsSectionHeader("监测与成长")
-        }
+            if (settings.version.showReminders) {
+                item {
+                    IslandChannelGroup(
+                        validation = validation,
+                        now = now,
+                        testStartedAt = testStartedAt,
+                        onStartTest = vm::startIslandTest,
+                        onRefreshNow = vm::refreshNotificationsNow,
+                        onReschedule = {
+                            vm.refreshPermissionsState()
+                            Toast.makeText(context, "已重新调度全部提醒", Toast.LENGTH_SHORT).show()
+                        }
+                    )
+                }
+            }
         if (settings.version.showMonitorPage) {
             item {
                 SettingsGroup(title = "电池监测") {
@@ -750,6 +731,8 @@ fun SettingsScreen(
                 }
             }
         }
+        }
+        if (settingsPage == SETTINGS_OTHER) {
         if (settings.version.showTodoPage || settings.version.showPartnerPage) {
             item {
                 SettingsGroup(title = "成长节奏") {
@@ -807,6 +790,8 @@ fun SettingsScreen(
             }
         }
         }
+        }
+        if (settingsPage == SETTINGS_KEEPALIVE) {
         item {
             SettingsGroup(title = "权限与引导") {
                 PermissionRow(
@@ -900,9 +885,8 @@ fun SettingsScreen(
                 }
             }
         }
-        item {
-            SettingsSectionHeader("关于")
         }
+        if (settingsPage == SETTINGS_ABOUT) {
         item {
             SettingsGroup(title = "应用信息", contentPadding = PaddingValues(0.dp)) {
                 Row(
@@ -973,24 +957,36 @@ fun SettingsScreen(
                 PrivacyLine(iconRes = R.drawable.ic_ui_database, title = "数据只留在本机", detail = "Room + DataStore，卸载即清除")
             }
         }
-        item {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 4.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(
-                    text = "胶囊伙伴 ${BuildConfig.VERSION_NAME}",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    text = "一次只陪当前这一件事",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-                )
+        }
+        if (settingsPage == SETTINGS_HOME) {
+            item {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 6.dp)
+                        .clip(RoundedCornerShape(18.dp))
+                        .bounceClick(shape = RoundedCornerShape(18.dp)) {
+                            openSafely(
+                                context,
+                                Intent(Intent.ACTION_VIEW, android.net.Uri.parse(GITEE_REPO_URL))
+                            )
+                        }
+                        .padding(vertical = 8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "胶囊伙伴 ${BuildConfig.VERSION_NAME}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = "一次只陪当前这一件事 · 点此查看开源仓库",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                        textAlign = TextAlign.Center
+                    )
+                }
             }
         }
     }
@@ -1105,6 +1101,182 @@ fun SettingsScreen(
         OpenSourceDialog(onDismiss = { showOpenSource = false })
     }
 
+    }
+}
+
+@Composable
+private fun SettingsNavCard(content: @Composable ColumnScope.() -> Unit) {
+    SoftCard {
+        Column(content = content)
+    }
+}
+
+@Composable
+private fun HomeNavRow(
+    iconRes: Int,
+    title: String,
+    detail: String,
+    trailing: String? = null,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .bounceClick(shape = RoundedCornerShape(14.dp), onClick = onClick)
+            .padding(vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(34.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                painter = painterResource(iconRes),
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(19.dp)
+            )
+        }
+        Spacer(Modifier.width(14.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = detail,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        if (trailing != null) {
+            Spacer(Modifier.width(8.dp))
+            Pill(
+                text = trailing,
+                color = MintSoft,
+                contentColor = Mint
+            )
+        }
+        Icon(
+            painter = painterResource(R.drawable.ic_ui_chevron_right),
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier
+                .padding(start = 4.dp)
+                .size(18.dp)
+        )
+    }
+}
+
+@Composable
+private fun IslandChannelGroup(
+    validation: ValidationResult?,
+    now: Long,
+    testStartedAt: Long,
+    onStartTest: () -> Unit,
+    onRefreshNow: () -> Unit,
+    onReschedule: () -> Unit
+) {
+    val context = LocalContext.current
+    SettingsGroup(title = "上岛通道") {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = "实况通知",
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.weight(1f)
+            )
+            if (validation == null) {
+                Pill(
+                    text = "待校验",
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else if (validation.eligible) {
+                Pill(text = "可上岛", color = MintSoft, contentColor = Mint)
+            } else {
+                Pill(text = "将降级", color = Coral.copy(alpha = 0.14f), contentColor = Coral)
+            }
+        }
+        if (validation != null && !validation.eligible) {
+            Spacer(Modifier.height(8.dp))
+            Surface(
+                shape = MaterialTheme.shapes.medium,
+                color = MaterialTheme.colorScheme.surfaceVariant
+            ) {
+                Column(modifier = Modifier.padding(10.dp)) {
+                    validation.reasons.take(4).forEach { reason ->
+                        Text(
+                            text = "· $reason",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        Text(
+            text = "模拟 1 分钟准备 + 1 分钟进行，不计成长与待办进度。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(12.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            CapsuleButton(
+                text = "上岛测试",
+                onClick = onStartTest,
+                modifier = Modifier.weight(1f),
+                height = 46.dp
+            )
+            CapsuleButton(
+                text = "刷新当前",
+                onClick = onRefreshNow,
+                modifier = Modifier.weight(1f),
+                filled = false,
+                height = 46.dp
+            )
+        }
+        if (now - testStartedAt in 0L..125_000L) {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = "测试进行中，结束后自动收起。",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary
+            )
+        }
+        Spacer(Modifier.height(4.dp))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .bounceClick(shape = RoundedCornerShape(14.dp), onClick = onReschedule)
+                .padding(vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "重新调度全部提醒",
+                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = "按当前权限重新排一遍提醒与监听",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Icon(
+                painter = painterResource(R.drawable.ic_ui_chevron_right),
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
     }
 }
 
@@ -1697,27 +1869,6 @@ private fun SortIconButton(onClick: () -> Unit) {
             drawLine(tint, Offset(cx, bottom), Offset(cx - wing, bottom - arrow), stroke, StrokeCap.Round)
             drawLine(tint, Offset(cx, bottom), Offset(cx + wing, bottom - arrow), stroke, StrokeCap.Round)
         }
-    }
-}
-
-@Composable
-private fun SettingsSectionHeader(text: String) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(start = 4.dp, top = 6.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            text = text,
-            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
-            color = MaterialTheme.colorScheme.primary
-        )
-        Spacer(Modifier.width(10.dp))
-        HorizontalDivider(
-            modifier = Modifier.weight(1f),
-            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f)
-        )
     }
 }
 
