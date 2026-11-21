@@ -7,6 +7,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,7 +31,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -75,6 +76,7 @@ import com.capsulepal.app.signals.UsageAccess
 import com.capsulepal.app.ui.CapsuleViewModel
 import com.capsulepal.app.ui.GeekUiState
 import com.capsulepal.app.ui.components.CapsuleButton
+import com.capsulepal.app.ui.components.ElasticSwitch
 import com.capsulepal.app.ui.components.InlineStat
 import com.capsulepal.app.ui.components.PartnerFace
 import com.capsulepal.app.ui.components.Pill
@@ -414,8 +416,7 @@ fun GeekPowerScreen(state: MonitorState?, vm: CapsuleViewModel) {
         discharges = geek.discharges,
         levelPct = reading?.levelPct,
         nowMillis = System.currentTimeMillis(),
-        charging = charging,
-        livePowerW = livePowerW
+        charging = charging
     )
     val level = reading?.levelPct
 
@@ -540,10 +541,6 @@ fun GeekPowerScreen(state: MonitorState?, vm: CapsuleViewModel) {
                     GeekStatRow(
                         label = if (estimate.reference) "上次放电时长" else "已放电",
                         value = formatDuration(estimate.elapsedMillis)
-                    )
-                    GeekStatRow(
-                        label = "放电功率（仅供观察）",
-                        value = estimate.powerW?.let { BatteryCalc.formatPower(it) } ?: "--"
                     )
                 }
             }
@@ -1029,7 +1026,10 @@ private fun SessionHistoryScreen(
         }
 
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 SessionTab("充电会话", selected = tab == 0) { tab = 0 }
                 SessionTab("放电会话", selected = tab == 1) { tab = 1 }
             }
@@ -1202,7 +1202,7 @@ fun GeekOverlayScreen(state: MonitorState?, vm: CapsuleViewModel) {
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    Switch(
+                    ElasticSwitch(
                         checked = enabled,
                         onCheckedChange = { vm.setMetricOverlayEnabled(it) }
                     )
@@ -1392,7 +1392,7 @@ private fun ToggleRow(label: String, checked: Boolean, onCheckedChange: (Boolean
             color = MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.weight(1f)
         )
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
+        ElasticSwitch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
 
@@ -1409,7 +1409,6 @@ private fun List<Float>.downsample(maxPoints: Int = 120): List<Float> {
 private data class DischargeEstimate(
     val ratePctPerHour: Float,
     val elapsedMillis: Long,
-    val powerW: Float?,
     val reference: Boolean
 )
 
@@ -1423,15 +1422,13 @@ private const val MIN_DROP_PCT = 1
  * 放电起点优先取「上一次充电结束」的时刻与电量：放电会话只在 App 运行时才开始记录，
  * 拔电到进程起来之间可能已隔一段时间，充电会话结束时的电量更贴近真实起点。
  * 没有充电记录时退回尚未结束的放电会话；充电中则拿上一次完整放电当参考值。
- * 放电功率只展示，不参与任何计算。
  */
 private fun estimateDischarge(
     charges: List<ChargeSessionEntity>,
     discharges: List<DischargeSessionEntity>,
     levelPct: Int?,
     nowMillis: Long,
-    charging: Boolean,
-    livePowerW: Float?
+    charging: Boolean
 ): DischargeEstimate? {
     val level = levelPct ?: return null
 
@@ -1446,7 +1443,6 @@ private fun estimateDischarge(
             endMillis = last.endTs,
             startPct = last.startPct,
             endPct = last.endPct,
-            powerW = last.avgPowerW,
             reference = true
         )
     }
@@ -1475,7 +1471,6 @@ private fun estimateDischarge(
         endMillis = nowMillis,
         startPct = startPct,
         endPct = level,
-        powerW = livePowerW,
         reference = false
     )
 }
@@ -1485,7 +1480,6 @@ private fun buildRate(
     endMillis: Long,
     startPct: Int,
     endPct: Int,
-    powerW: Float?,
     reference: Boolean
 ): DischargeEstimate? {
     val elapsed = endMillis - startMillis
@@ -1496,7 +1490,6 @@ private fun buildRate(
     return DischargeEstimate(
         ratePctPerHour = rate,
         elapsedMillis = elapsed,
-        powerW = powerW?.takeIf { it > 0f },
         reference = reference
     )
 }

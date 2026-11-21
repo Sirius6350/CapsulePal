@@ -431,7 +431,10 @@ fun TaskEditorSheet(
 
                 Spacer(Modifier.height(18.dp))
                 FieldLabel("安排在")
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     ChoiceChip(
                         text = "今天",
                         selected = date == LocalDate.now(),
@@ -487,7 +490,10 @@ fun TaskEditorSheet(
                 val restDurations = remember(durationPresets) { durationPresets.drop(3) }
                 val customDuration = duration !in durationPresets
                 var showMoreDurations by remember { mutableStateOf(false) }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     quickDurations.forEach { option ->
                         ChoiceChip(
                             text = TimeUtils.formatDuration(option),
@@ -536,7 +542,10 @@ fun TaskEditorSheet(
                 }
                 val customPrepare = prepare != 0 && prepare !in preparePresets
                 var showMorePrepares by remember { mutableStateOf(false) }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     ChoiceChip(
                         text = "不提前",
                         selected = prepare == 0,
@@ -752,7 +761,10 @@ fun TaskEditorSheet(
 
                 Spacer(Modifier.height(18.dp))
                 FieldLabel("重要程度")
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     Priority.entries.forEach { option ->
                         ChoiceChip(
                             text = option.label,

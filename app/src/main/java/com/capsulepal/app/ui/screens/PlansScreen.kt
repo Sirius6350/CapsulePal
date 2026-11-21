@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -497,7 +498,7 @@ private fun PlanDetail(
                 )
                 Spacer(Modifier.width(8.dp))
                 CapsuleButton(
-                    text = "添加",
+                    text = "速记",
                     onClick = {
                         val title = quickTitle.trim()
                         if (title.isNotEmpty()) {
@@ -534,7 +535,10 @@ private fun PlanDetail(
             }
         } else {
             item {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     ChoiceChip(
                         text = "按日期",
                         selected = groupMode == PlanGroupMode.DATE,
@@ -912,7 +916,10 @@ private fun PlanEditorDialog(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(Modifier.height(6.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     PlanType.entries.forEach { option ->
                         ChoiceChip(
                             text = option.label,
@@ -968,7 +975,10 @@ private fun PlanEditorDialog(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(Modifier.height(6.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
                     PlanColor.entries.forEach { item ->
                         Box(
                             modifier = Modifier

@@ -445,6 +445,7 @@ fun TodayScreen(
                 .align(Alignment.BottomEnd)
                 .padding(end = 20.dp, bottom = 24.dp)
                 .size(56.dp)
+                .clip(CircleShape)
                 .combinedClickable(
                     onClickLabel = "添加一件事",
                     onLongClickLabel = "创建即时待办",

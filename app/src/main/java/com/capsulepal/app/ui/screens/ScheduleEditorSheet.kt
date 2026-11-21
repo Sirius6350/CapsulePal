@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -144,7 +145,10 @@ fun ScheduleEditorSheet(
                     )
                     TextButton(onClick = { showDatePicker = true }) { Text("选择日期") }
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     ChoiceChip(
                         text = "今天",
                         selected = date == LocalDate.now(),
@@ -172,7 +176,10 @@ fun ScheduleEditorSheet(
                 val quickDurations = remember { listOf(15, 30, 45) }
                 val moreDurations = remember { listOf(60, 90, 120) }
                 val customDuration = duration !in quickDurations && duration !in moreDurations
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     quickDurations.forEach { value ->
                         ChoiceChip(
                             text = TimeUtils.formatDuration(value),
@@ -216,7 +223,10 @@ fun ScheduleEditorSheet(
                     val quickCategories = remember(categories) { categories.take(3) }
                     val moreCategories = remember(categories) { categories.drop(3) }
                     val selectedInMore = category in moreCategories
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        modifier = Modifier.horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
                         quickCategories.forEach { item ->
                             ChoiceChip(
                                 text = item.label,

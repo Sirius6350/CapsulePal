@@ -107,8 +107,9 @@ class NotificationActionReceiver : BroadcastReceiver() {
             try {
                 if (intent.action == NotificationActions.ACTION_ACK) {
                     app.container.acknowledgeTask(taskId)
-                    context.stopService(Intent(context, LiveUpdateService::class.java))
-                    app.container.notifications.cancel()
+                    // 不要把上岛服务一起停掉：充电中还要靠它把位置切回充电功率岛。
+                    // 拔电且没有其它待办时，刷新循环会自行收通知并停止服务。
+                    LiveUpdateService.refresh(context)
                     return@launch
                 }
                 val task = app.container.taskRepository.task(taskId) ?: return@launch

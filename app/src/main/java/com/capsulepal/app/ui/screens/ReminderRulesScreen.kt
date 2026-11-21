@@ -36,6 +36,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -1408,7 +1409,10 @@ private fun ConditionCard(
                     shape = RoundedCornerShape(16.dp)
                 )
                 Spacer(Modifier.height(6.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     OutlinedPillButton("读取当前 WiFi") {
                         if (!permissions.location) {
                             onRequestPermission(ReminderTriggerType.WIFI)
@@ -1458,7 +1462,10 @@ private fun ConditionCard(
                     shape = RoundedCornerShape(16.dp)
                 )
                 Spacer(Modifier.height(6.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     OutlinedPillButton("选择蓝牙设备") {
                         if (!permissions.bluetooth) {
                             onRequestPermission(ReminderTriggerType.BLUETOOTH)
@@ -1527,7 +1534,10 @@ private fun ConditionCard(
                     }
                 }
                 Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     OutlinedPillButton(
                         if (draft.appPackages.isEmpty()) "选择应用" else "修改应用"
                     ) { onPickApp() }
@@ -1674,7 +1684,10 @@ private enum class ReminderTimeTarget {
 
 @Composable
 private fun DaySelector(daysMask: Int, onChange: (Int) -> Unit) {
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+    Row(
+        modifier = Modifier.horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
         ReminderRule.DAY_LABELS.forEachIndexed { index, label ->
             val bit = 1 shl index
             Surface(
@@ -1704,7 +1717,10 @@ private fun DaySelector(daysMask: Int, onChange: (Int) -> Unit) {
         }
     }
     Spacer(Modifier.height(4.dp))
-    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+    Row(
+        modifier = Modifier.horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
         listOf("每天" to ReminderRule.ALL_DAYS,
             "工作日" to ReminderRule.WEEKDAYS,
             "周末" to ReminderRule.WEEKEND).forEach { (label, mask) ->
@@ -1954,7 +1970,10 @@ private fun MessageComposer(
         shape = RoundedCornerShape(16.dp)
     )
     Spacer(Modifier.height(8.dp))
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(
+        modifier = Modifier.horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
         listOf(
             Triple(ReminderRule.SLOT_TASK, "待办", CoralSoft to Coral),
             Triple(ReminderRule.SLOT_MINUTES, "计时", MintSoft to Mint),

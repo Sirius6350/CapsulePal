@@ -169,8 +169,9 @@ class TaskNotificationCoordinator(
             if (plugged && !suppressed && (justPlugged || retriggered)) {
                 if (!retriggered) chargingRetriggerTaskId = taskId
             } else {
-                cancel()
-                return NotificationPlan.None
+                // 待办不再上岛时，别让这一轮直接收成空白：
+                // 插着电就把位置让给充电功率岛，拔电时 buildChargingPlan 会自行收起。
+                return buildChargingPlan(nowMillis)
             }
         }
 
