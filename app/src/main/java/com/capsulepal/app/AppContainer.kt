@@ -35,6 +35,7 @@ import com.capsulepal.app.domain.TriggerSuggestion
 import com.capsulepal.app.monitor.BatteryMonitor
 import com.capsulepal.app.monitor.RuntimeMetrics
 import com.capsulepal.app.notifier.InstantTodoNotifier
+import com.capsulepal.app.notifier.NotificationActions
 import com.capsulepal.app.notifier.NotificationPlan
 import com.capsulepal.app.notifier.NotificationValidator
 import com.capsulepal.app.notifier.TaskNotificationCoordinator
@@ -255,8 +256,14 @@ class AppContainer(context: Context) {
     internal fun refreshIslandDirect() {
         appScope.launch {
             when (val plan = notifications.buildPlan()) {
-                is NotificationPlan.Live -> notifications.postLive(plan.notification)
-                is NotificationPlan.Fallback -> notifications.postFallback(plan.notification)
+                is NotificationPlan.Live -> notifications.postLive(
+                    plan.notification,
+                    NotificationActions.islandNotificationId(plan.content)
+                )
+                is NotificationPlan.Fallback -> notifications.postFallback(
+                    plan.notification,
+                    NotificationActions.islandNotificationId(plan.content)
+                )
                 NotificationPlan.None -> notifications.cancel()
             }
             refreshInstantTodoNotification()

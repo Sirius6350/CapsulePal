@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.ServiceCompat
 import com.capsulepal.app.CapsuleApp
 import com.capsulepal.app.notifier.NotificationActions
@@ -25,6 +26,7 @@ class LiveUpdateService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var refreshJob: Job? = null
     private var foregroundStarted = false
+    private var foregroundNotificationId = 0
 
     override fun onCreate() {
         super.onCreate()
@@ -43,7 +45,10 @@ class LiveUpdateService : Service() {
 
         val container = (application as CapsuleApp).container
         if (!foregroundStarted) {
-            val started = startForegroundSafely(container.notifications.placeholder())
+            val started = startForegroundSafely(
+                container.notifications.placeholder(),
+                NotificationActions.TASK_NOTIFICATION_ID
+            )
             if (!started) {
                 // 后台启动前台服务被系统拦截：直接投递当前上岛通知，避免完全静默。
                 container.refreshIslandDirect()
@@ -75,22 +80,24 @@ class LiveUpdateService : Service() {
                 val keepRunning = when (val plan = container.notifications.buildPlan()) {
                     is NotificationPlan.Live -> {
                         nextDelay = plan.refreshIntervalMillis
-                        if (startForegroundSafely(plan.notification)) {
+                        val id = NotificationActions.islandNotificationId(plan.content)
+                        if (startForegroundSafely(plan.notification, id)) {
                             foregroundStarted = true
                         } else {
                             // 无法作为前台服务展示时直接投递，至少让上岛通知出现。
-                            container.notifications.postLive(plan.notification)
+                            container.notifications.postLive(plan.notification, id)
                         }
                         true
                     }
                     is NotificationPlan.Fallback -> {
                         nextDelay = plan.refreshIntervalMillis
+                        val id = NotificationActions.islandNotificationId(plan.content)
                         if (container.notifications.testActive()) {
                             // 测试降级时也保持前台刷新，确保准备/进行中切换与 2 分钟后自动收起。
-                            if (startForegroundSafely(plan.notification)) {
+                            if (startForegroundSafely(plan.notification, id)) {
                                 foregroundStarted = true
                             } else {
-                                container.notifications.postFallback(plan.notification)
+                                container.notifications.postFallback(plan.notification, id)
                             }
                             true
                         } else {
@@ -99,8 +106,9 @@ class LiveUpdateService : Service() {
                                 ServiceCompat.STOP_FOREGROUND_REMOVE
                             )
                             foregroundStarted = false
+                            foregroundNotificationId = 0
                             // 先移除同 ID 的前台通知，再投递降级通知，否则会被一起清掉。
-                            container.notifications.postFallback(plan.notification)
+                            container.notifications.postFallback(plan.notification, id)
                             stopSelf()
                             false
                         }
@@ -112,6 +120,7 @@ class LiveUpdateService : Service() {
                             ServiceCompat.STOP_FOREGROUND_REMOVE
                         )
                         foregroundStarted = false
+                        foregroundNotificationId = 0
                         stopSelf()
                         false
                     }
@@ -134,19 +143,34 @@ class LiveUpdateService : Service() {
         }
     }
 
-    private fun startForegroundSafely(notification: android.app.Notification): Boolean = runCatching {
-        ServiceCompat.startForeground(
-            this,
-            NotificationActions.TASK_NOTIFICATION_ID,
-            notification,
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
-            } else {
-                0
+    private fun startForegroundSafely(
+        notification: android.app.Notification,
+        id: Int
+    ): Boolean {
+        // 待办岛与充电岛样式不同，切换时必须彻底换一条通知：
+        // 直接在同一 ID 上更新会被系统丢弃，表现为充电功率岛消失。
+        if (foregroundStarted && id != foregroundNotificationId) {
+            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+            foregroundStarted = false
+            if (foregroundNotificationId != 0) {
+                NotificationManagerCompat.from(this).cancel(foregroundNotificationId)
             }
-        )
-        true
-    }.getOrDefault(false)
+        }
+        return runCatching {
+            ServiceCompat.startForeground(
+                this,
+                id,
+                notification,
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                } else {
+                    0
+                }
+            )
+            foregroundNotificationId = id
+            true
+        }.getOrDefault(false)
+    }
 
     override fun onDestroy() {
         if (instance === this) instance = null

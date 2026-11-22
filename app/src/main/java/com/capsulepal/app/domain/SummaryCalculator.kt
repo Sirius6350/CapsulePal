@@ -1,7 +1,5 @@
 package com.capsulepal.app.domain
 
-import com.capsulepal.app.data.model.Plan
-import com.capsulepal.app.data.model.RepeatRule
 import com.capsulepal.app.data.model.Task
 import com.capsulepal.app.data.model.TaskCategory
 import com.capsulepal.app.data.model.TaskStatus
@@ -17,7 +15,7 @@ data class PlanProgress(
     val completed: Int = 0,
     val skipped: Int = 0,
     val open: Int = 0,
-    /** 周期计划的完整分母：已铺出的实例 + 未来到结束日应生成的实例。 */
+    /** 分母只数计划里实际存在的待办，删除后立即跟着变小。 */
     val total: Int = completed + skipped + open
 ) {
     val fraction: Float get() = if (total == 0) 0f else completed.toFloat() / total
@@ -25,62 +23,20 @@ data class PlanProgress(
 }
 
 /**
- * [plan] 为周期计划时，分母按整个计划区间推算，不依赖重复实例是否已经铺出来，
- * 这样百分比不会随着滚动补齐未来实例而往回掉。
+ * 分母只统计计划内实际存在的待办，不再按重复规则推算未来实例：
+ * 推算会把用户已经删掉的日期又算回分母，出现「只剩 55 条却显示 /120」。
  */
-fun planProgress(tasks: List<Task>, plan: Plan? = null): PlanProgress {
+fun planProgress(tasks: List<Task>): PlanProgress {
     val completed = tasks.count { it.status == TaskStatus.COMPLETED }
     val skipped = tasks.count { it.status == TaskStatus.SKIPPED }
     val open = tasks.count { it.isOpen }
-    val end = plan?.takeIf { it.isPeriod }?.targetDate
-    val total = if (end != null) {
-        expectedPeriodTotal(tasks, end)
-    } else {
-        completed + skipped + open
-    }
     return PlanProgress(
         completed = completed,
         skipped = skipped,
         open = open,
-        total = maxOf(total, completed + skipped + open)
+        total = completed + skipped + open
     )
 }
-
-/**
- * 周期计划的应做条数：按系列统计「已铺出的实例 + 从最后一条到结束日还应生成的实例」。
- * 单独待办每条算一个；连续 n 天在创建时已一次铺满，不再向后推算。
- */
-private fun expectedPeriodTotal(tasks: List<Task>, planEnd: LocalDate): Int {
-    if (tasks.isEmpty()) return 0
-    var total = tasks.count { it.seriesId == 0L }
-    tasks.filter { it.seriesId != 0L }
-        .groupBy { it.seriesId }
-        .values
-        .forEach { rows ->
-            total += rows.size
-            val head = rows.minByOrNull { it.date } ?: return@forEach
-            if (head.repeat == RepeatRule.ONCE || head.repeat == RepeatRule.CONSECUTIVE) {
-                return@forEach
-            }
-            var cursor = rows.maxOf { it.date }.plusDays(1)
-            var guard = 0
-            while (!cursor.isAfter(planEnd) && guard < MAX_PROJECTED_DAYS) {
-                val matches = when (head.repeat) {
-                    RepeatRule.DAILY -> true
-                    RepeatRule.WEEKLY -> cursor.dayOfWeek in head.repeatDays
-                    else -> false
-                }
-                val rest = head.skipHolidays && HolidayProvider.isRestDay(cursor)
-                if (matches && !rest) total++
-                cursor = cursor.plusDays(1)
-                guard++
-            }
-        }
-    return total
-}
-
-/** 推算未来实例的安全上限，仅防御异常的超长计划。 */
-private const val MAX_PROJECTED_DAYS = 3_660
 
 /** 重复计划的进度：只记录完成次数，不算百分比。 */
 data class RepeatPlanStats(

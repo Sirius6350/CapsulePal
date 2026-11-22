@@ -88,21 +88,29 @@ class LiveUpdateNotifier(private val context: Context) {
     fun validate(notification: Notification): ValidationResult =
         NotificationValidator.validate(context, notification, NotificationChannels.TASK_LIVE)
 
-    fun post(notification: Notification): ValidationResult {
+    fun post(
+        notification: Notification,
+        id: Int = NotificationActions.TASK_NOTIFICATION_ID
+    ): ValidationResult {
         val validation = validate(notification)
         if (validation.eligible) {
-            postInternal(notification)
+            postInternal(notification, id)
         }
         return validation
     }
 
-    fun postInternal(notification: Notification) {
+    fun postInternal(
+        notification: Notification,
+        id: Int = NotificationActions.TASK_NOTIFICATION_ID
+    ) {
         if (!NotificationValidator.hasPostPermission(context)) return
-        manager.notify(NotificationActions.TASK_NOTIFICATION_ID, notification)
+        manager.cancel(NotificationActions.otherIslandNotificationId(id))
+        manager.notify(id, notification)
     }
 
     fun cancel() {
         manager.cancel(NotificationActions.TASK_NOTIFICATION_ID)
+        manager.cancel(NotificationActions.CHARGING_ISLAND_NOTIFICATION_ID)
     }
 
     fun placeholder(): Notification =

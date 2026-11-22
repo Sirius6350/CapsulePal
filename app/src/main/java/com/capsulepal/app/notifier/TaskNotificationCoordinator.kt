@@ -305,12 +305,18 @@ class TaskNotificationCoordinator(
         reminderTaskId = null
     }
 
-    fun postFallback(notification: Notification) {
-        fallbackNotifier.post(notification)
+    fun postFallback(
+        notification: Notification,
+        id: Int = NotificationActions.TASK_NOTIFICATION_ID
+    ) {
+        fallbackNotifier.post(notification, id)
     }
 
-    fun postLive(notification: Notification) {
-        liveNotifier.postInternal(notification)
+    fun postLive(
+        notification: Notification,
+        id: Int = NotificationActions.TASK_NOTIFICATION_ID
+    ) {
+        liveNotifier.postInternal(notification, id)
     }
 
     fun cancelPreview() {

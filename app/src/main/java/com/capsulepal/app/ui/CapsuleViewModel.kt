@@ -438,7 +438,7 @@ class CapsuleViewModel(application: Application) : AndroidViewModel(application)
                 val planTasks = byPlan[plan.id].orEmpty()
                 PlanCard(
                     plan = plan,
-                    progress = planProgress(planTasks, plan),
+                    progress = planProgress(planTasks),
                     stats = repeatPlanStats(planTasks)
                 )
             },

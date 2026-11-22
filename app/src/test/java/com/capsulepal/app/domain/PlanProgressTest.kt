@@ -1,7 +1,5 @@
 package com.capsulepal.app.domain
 
-import com.capsulepal.app.data.model.Plan
-import com.capsulepal.app.data.model.PlanType
 import com.capsulepal.app.data.model.RepeatRule
 import com.capsulepal.app.data.model.Task
 import com.capsulepal.app.data.model.TaskStatus
@@ -101,59 +99,28 @@ class PlanProgressTest {
     )
 
     @Test
-    fun `period plan counts not-yet-materialized repeat instances in the denominator`() {
-        val plan = Plan(
-            id = 7L,
-            title = "p",
-            type = PlanType.PERIOD,
-            startDate = LocalDate.of(2026, 11, 1),
-            targetDate = LocalDate.of(2026, 11, 5)
-        )
-        val progress = planProgress(
-            listOf(
-                seriesTask(LocalDate.of(2026, 11, 1), TaskStatus.COMPLETED),
-                seriesTask(LocalDate.of(2026, 11, 2), TaskStatus.COMPLETED),
-                seriesTask(LocalDate.of(2026, 11, 3), TaskStatus.SKIPPED)
-            ),
-            plan
-        )
-        assertEquals(5, progress.total)
-        assertEquals(2, progress.completed)
-        assertEquals(1, progress.skipped)
-        assertEquals(40, progress.percent)
-    }
+    fun `denominator follows the tasks that actually remain`() {
+        val tasks = (1..5).map { day ->
+            seriesTask(LocalDate.of(2026, 11, day), if (day <= 2) TaskStatus.COMPLETED else TaskStatus.IDLE)
+        }
+        assertEquals(5, planProgress(tasks).total)
 
-    @Test
-    fun `period plan denominator no longer grows after the series is fully spread`() {
-        val plan = Plan(
-            id = 7L,
-            title = "p",
-            type = PlanType.PERIOD,
-            startDate = LocalDate.of(2026, 11, 1),
-            targetDate = LocalDate.of(2026, 11, 3)
-        )
-        val progress = planProgress(
-            listOf(
-                seriesTask(LocalDate.of(2026, 11, 1), TaskStatus.COMPLETED),
-                seriesTask(LocalDate.of(2026, 11, 2)),
-                seriesTask(LocalDate.of(2026, 11, 3))
-            ),
-            plan
-        )
+        // 删掉两条（例如删除计划里的重复待办）后，分母必须立即变成 3。
+        val afterDelete = tasks.filterNot { it.date.dayOfMonth == 4 || it.date.dayOfMonth == 5 }
+        val progress = planProgress(afterDelete)
         assertEquals(3, progress.total)
-        assertEquals(33, progress.percent)
+        assertEquals(2, progress.completed)
+        assertEquals(67, progress.percent)
     }
 
     @Test
-    fun `repeat plan keeps the materialized denominator`() {
-        val plan = Plan(id = 7L, title = "p", type = PlanType.REPEAT)
-        val progress = planProgress(
-            listOf(
-                seriesTask(LocalDate.of(2026, 11, 1), TaskStatus.COMPLETED),
-                seriesTask(LocalDate.of(2026, 11, 2))
-            ),
-            plan
+    fun `period border does not add future instances back to the denominator`() {
+        // 计划区间还剩很多天，但计划里只剩这些实例，分母不应再按重复规则推算。
+        val tasks = listOf(
+            seriesTask(LocalDate.of(2026, 11, 1), TaskStatus.COMPLETED),
+            seriesTask(LocalDate.of(2026, 11, 2), TaskStatus.SKIPPED)
         )
+        val progress = planProgress(tasks)
         assertEquals(2, progress.total)
         assertEquals(50, progress.percent)
     }

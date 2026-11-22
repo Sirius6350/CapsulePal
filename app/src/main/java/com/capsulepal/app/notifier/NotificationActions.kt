@@ -8,6 +8,29 @@ import com.capsulepal.app.MainActivity
 object NotificationActions {
     const val TASK_NOTIFICATION_ID = 1001
 
+    /**
+     * 充电岛使用独立通知位。
+     * 待办岛按进度填充红条（styledByProgress = true），充电岛保留整条色带
+     * （styledByProgress = false）；同一 ID 来回切换这个样式时，系统会丢弃更新，
+     * 表现为完成/跳过/收到待办后充电功率岛消失。
+     */
+    const val CHARGING_ISLAND_NOTIFICATION_ID = 1007
+
+    fun islandNotificationId(content: TaskNotificationContent): Int =
+        if (content.kind == IslandKind.CHARGING) {
+            CHARGING_ISLAND_NOTIFICATION_ID
+        } else {
+            TASK_NOTIFICATION_ID
+        }
+
+    /** 待办岛与充电岛互斥，投递其中一个时清掉另一个。 */
+    fun otherIslandNotificationId(id: Int): Int =
+        if (id == TASK_NOTIFICATION_ID) {
+            CHARGING_ISLAND_NOTIFICATION_ID
+        } else {
+            TASK_NOTIFICATION_ID
+        }
+
     /** 保活前台服务占用的通知位，必须独立，不能被普通通知复用。 */
     const val KEEP_ALIVE_NOTIFICATION_ID = 1002
     const val DUAL_REMINDER_NOTIFICATION_ID = 1003

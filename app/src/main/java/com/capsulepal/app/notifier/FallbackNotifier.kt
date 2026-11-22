@@ -44,11 +44,15 @@ class FallbackNotifier(private val context: Context) {
         return builder.build()
     }
 
-    fun post(notification: Notification) {
+    fun post(
+        notification: Notification,
+        id: Int = NotificationActions.TASK_NOTIFICATION_ID
+    ) {
         if (!NotificationValidator.hasPostPermission(context)) return
         // 同一 ID 从实况渠道切换到提醒渠道时，先取消再发，避免渠道沿用。
-        manager.cancel(NotificationActions.TASK_NOTIFICATION_ID)
-        manager.notify(NotificationActions.TASK_NOTIFICATION_ID, notification)
+        manager.cancel(id)
+        manager.cancel(NotificationActions.otherIslandNotificationId(id))
+        manager.notify(id, notification)
     }
 
     /** 清理旧版本遗留的预览通知，当前测试已改走任务通知通道。 */
@@ -58,5 +62,6 @@ class FallbackNotifier(private val context: Context) {
 
     fun cancel() {
         manager.cancel(NotificationActions.TASK_NOTIFICATION_ID)
+        manager.cancel(NotificationActions.CHARGING_ISLAND_NOTIFICATION_ID)
     }
 }
