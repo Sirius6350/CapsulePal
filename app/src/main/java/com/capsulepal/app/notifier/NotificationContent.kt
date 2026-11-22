@@ -8,6 +8,7 @@ import com.capsulepal.app.data.model.TaskKind
 import com.capsulepal.app.data.model.TaskPhase
 import com.capsulepal.app.data.model.TimelineState
 import com.capsulepal.app.data.model.iconRes
+import com.capsulepal.app.domain.TaskStepSchedule
 import com.capsulepal.app.domain.TimeUtils
 import com.capsulepal.app.monitor.BatteryCalc
 import com.capsulepal.app.monitor.MonitorState
@@ -40,18 +41,20 @@ object NotificationContentFactory {
     fun fromTimeline(
         state: TimelineState,
         nowMillis: Long,
-        charging: MonitorState? = null
+        charging: MonitorState? = null,
+        planTitles: Map<Long, String> = emptyMap()
     ): TaskNotificationContent? {
         // 上岛只由“已进入准备窗口 / 已开始”驱动。
         // 未到用户设置的准备时间时，即使离开始很近也不提前上岛。
-        state.active?.let { return fromActive(it, nowMillis, charging) }
+        state.active?.let { return fromActive(it, nowMillis, charging, planTitles) }
         return null
     }
 
     fun fromActive(
         active: ActiveTask,
         nowMillis: Long,
-        charging: MonitorState? = null
+        charging: MonitorState? = null,
+        planTitles: Map<Long, String> = emptyMap()
     ): TaskNotificationContent {
         val remaining = active.remainingMillis(nowMillis)
         val total = (active.windowEndMillis - active.windowStartMillis).coerceAtLeast(1L)
@@ -68,16 +71,20 @@ object NotificationContentFactory {
 
         // 统一文案：待办名 + 开始时间 + 剩余 / 已进行分钟。
         val clock = TimeUtils.formatClock(active.task.startTime)
-        val marker = when {
-            active.task.planId != 0L -> "计划 · "
-            active.task.kind == TaskKind.SCHEDULE -> "日程 · "
-            else -> ""
+        val taskName = active.task.shortTitle.ifBlank { active.task.title }
+        val baseTitle = when {
+            active.task.planId != 0L -> {
+                val planName = planTitles[active.task.planId]?.takeIf { it.isNotBlank() } ?: "计划"
+                "$planName·$taskName"
+            }
+            active.task.kind == TaskKind.SCHEDULE -> "日程 · $taskName"
+            else -> taskName
         }
         return when (active.phase) {
             TaskPhase.PREPARE -> TaskNotificationContent(
                 phase = NotificationPhase.PREPARE,
                 iconRes = active.task.category.iconRes(),
-                title = marker + active.task.shortTitle.ifBlank { active.task.title },
+                title = baseTitle,
                 text = "$clock 开始 · 还有 ${TimeUtils.formatMinutesRounded(remaining)}",
                 bigText = ("「${active.task.title}」$clock 开始，还有 ${
                     TimeUtils.formatMinutesRounded(remaining)
@@ -91,24 +98,37 @@ object NotificationContentFactory {
             )
             TaskPhase.IN_PROGRESS -> {
                 val elapsed = (nowMillis - active.windowStartMillis).coerceIn(0L, total)
+                val step = TaskStepSchedule.progress(active.task, nowMillis)
+                val current = step.current
+                val elapsedText = "已进行 ${TimeUtils.formatMinutesRounded(elapsed)}"
+                val text = when {
+                    current != null -> "$elapsedText · 当前步骤还剩 ${
+                        TimeUtils.formatMinutesRounded(current.endMillis - nowMillis)
+                    }"
+                    else -> "$elapsedText · 还剩 ${TimeUtils.formatMinutesRounded(remaining)}"
+                }
+                val stepLine = when {
+                    current != null -> "当前步骤「${current.step.title}」还剩 ${
+                        TimeUtils.formatMinutesRounded(current.endMillis - nowMillis)
+                    }"
+                    else -> "还剩 ${TimeUtils.formatMinutesRounded(remaining)}"
+                }
                 TaskNotificationContent(
                     phase = NotificationPhase.IN_PROGRESS,
                     iconRes = active.task.category.iconRes(),
-                    title = marker + active.task.shortTitle.ifBlank { active.task.title },
-                    text = "进行中 · 已进行 ${
-                        TimeUtils.formatMinutesRounded(elapsed)
-                    } · 还剩 ${TimeUtils.formatMinutesRounded(remaining)}",
+                    title = current?.let { "$baseTitle·${it.step.title}" } ?: baseTitle,
+                    text = text,
                     bigText = ("正在陪「${active.task.title}」，$clock 开始，已经进行 ${
                         TimeUtils.formatMinutesRounded(elapsed)
-                    }，还剩 ${TimeUtils.formatMinutesRounded(remaining)}。" +
-                        " 结束后我会轻轻收好，再衔接下一项。")
+                    }，$stepLine。 结束后我会轻轻收好，再衔接下一项。")
                         .withNote(active.task.note) + chargingSuffix,
                     progress = progress.toInt().coerceIn(0, total.toInt()),
                     max = total.toInt(),
                     taskId = active.task.id,
                     taskTitle = active.task.title,
                     note = note,
-                    shortText = powerText
+                    // 充电功率优先；未充电时右侧显示当前步骤名，走完步骤后回退待办名。
+                    shortText = powerText.ifBlank { current?.step?.title.orEmpty() }
                 )
             }
         }

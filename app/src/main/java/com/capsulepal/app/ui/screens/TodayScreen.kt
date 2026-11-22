@@ -375,16 +375,31 @@ fun TodayScreen(
                 },
                 text = {
                     Column {
-                        TaskActionRow(
-                            title = "立即开始",
-                            subtitle = "把开始时间改到现在，并进入进行中"
-                        ) {
-                            actionTask = null
-                            vm.startRightNow(task)
+                        if (task.isOpen) {
+                            TaskActionRow(
+                                title = "立即开始",
+                                subtitle = "把开始时间改到现在，并进入进行中"
+                            ) {
+                                actionTask = null
+                                vm.startRightNow(task)
+                            }
+                            HorizontalDivider(
+                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
+                            )
                         }
-                        HorizontalDivider(
-                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
-                        )
+                        // 已结束或已过期的待办：最近可用的 5 分钟整点。
+                        if (!task.isOpen || task.endMillis < state.nowMillis) {
+                            TaskActionRow(
+                                title = "挪到最近",
+                                subtitle = "排在进行中待办之后，取最近的 5 分钟整点"
+                            ) {
+                                actionTask = null
+                                vm.moveTaskToNearest(task)
+                            }
+                            HorizontalDivider(
+                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
+                            )
+                        }
                         TaskActionRow(
                             title = "挪到明天",
                             subtitle = "保留 ${TimeUtils.formatClock(task.startTime)}，只改日期"
@@ -1193,11 +1208,7 @@ private fun TaskRow(
             .fillMaxWidth()
             .background(highlightColor)
             .bounceClick(
-                onLongClick = if (task.isOpen) {
-                    { onLongPress(task) }
-                } else {
-                    null
-                },
+                onLongClick = { onLongPress(task) },
                 onClick = onClick
             )
             .padding(horizontal = 16.dp, vertical = 14.dp),
@@ -1856,7 +1867,7 @@ private fun TaskGridCard(
     SoftCard(
         modifier = modifier.bounceClick(
             shape = RoundedCornerShape(22.dp),
-            onLongClick = if (task.isOpen) onLongPress else null
+            onLongClick = onLongPress
         ) { onEdit() }
     ) {
         Column(

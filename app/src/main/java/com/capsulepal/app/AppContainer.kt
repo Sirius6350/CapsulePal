@@ -56,6 +56,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.time.LocalDate
+import java.time.LocalDateTime
 import java.time.LocalTime
 
 data class CompletionOutcome(
@@ -108,6 +109,7 @@ class AppContainer(context: Context) {
     val notifications = TaskNotificationCoordinator(
         appContext,
         taskRepository,
+        planRepository,
         settingsRepository,
         chargingState = { batteryMonitor.state.value }
     )
@@ -451,6 +453,12 @@ class AppContainer(context: Context) {
 
     /** 长按待办 → 挪到以后：只改日期，状态回到待开始。 */
     suspend fun moveTaskTo(task: Task, date: LocalDate) {
+        val current = taskRepository.task(task.id) ?: task
+        val refund = if (current.status == TaskStatus.COMPLETED) {
+            taskRepository.awardedXp(task.id)
+        } else {
+            0
+        }
         scheduler.cancelTask(task.id)
         notifications.cancelReminder(task.id)
         settingsRepository.clearAcknowledgedTask(task.id)
@@ -458,8 +466,54 @@ class AppContainer(context: Context) {
             _triggerSuggestion.value = null
         }
         taskRepository.moveToDate(task.id, date)
+        if (refund > 0) {
+            partnerRepository.removeCompletion(refund)
+        }
         rescheduleVisibleTasks()
         LiveUpdateService.refresh(appContext)
+    }
+
+    /**
+     * 长按待办 → 挪到最近：
+     * - 有进行中的待办时排到它结束后，否则从此刻算起；
+     * - 向上取整到下一个 5 分钟整点；
+     * - 只改这一次，状态回到待开始；已完成的先回扣本次成长值。
+     */
+    suspend fun moveTaskToNearest(task: Task, activeEndMillis: Long? = null): LocalDateTime {
+        val nowMillis = System.currentTimeMillis()
+        val baseMillis = activeEndMillis?.takeIf { it > nowMillis } ?: nowMillis
+        val base = LocalDateTime.ofInstant(
+            java.time.Instant.ofEpochMilli(baseMillis),
+            java.time.ZoneId.systemDefault()
+        )
+        var target = base.withSecond(0).withNano(0)
+        if (base.second > 0 || base.nano > 0) {
+            target = target.plusMinutes(1)
+        }
+        val remainder = target.minute % 5
+        if (remainder != 0) {
+            target = target.plusMinutes((5 - remainder).toLong())
+        }
+
+        val current = taskRepository.task(task.id) ?: task
+        val refund = if (current.status == TaskStatus.COMPLETED) {
+            taskRepository.awardedXp(task.id)
+        } else {
+            0
+        }
+        scheduler.cancelTask(task.id)
+        notifications.cancelReminder(task.id)
+        settingsRepository.clearAcknowledgedTask(task.id)
+        if (_triggerSuggestion.value?.taskId == task.id) {
+            _triggerSuggestion.value = null
+        }
+        taskRepository.moveToTime(task.id, target.toLocalDate(), target.hour * 60 + target.minute)
+        if (refund > 0) {
+            partnerRepository.removeCompletion(refund)
+        }
+        rescheduleVisibleTasks()
+        LiveUpdateService.refresh(appContext)
+        return target
     }
 
     suspend fun saveTask(draft: TaskDraft): Long {

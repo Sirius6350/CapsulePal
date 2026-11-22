@@ -3,10 +3,13 @@ package com.capsulepal.app.notifier
 import android.app.Notification
 import android.content.Context
 import com.capsulepal.app.data.model.Task
+import com.capsulepal.app.data.model.TaskPhase
+import com.capsulepal.app.data.repo.PlanRepository
 import com.capsulepal.app.data.repo.SettingsRepository
 import com.capsulepal.app.data.repo.TaskRepository
 import com.capsulepal.app.domain.ReminderPolicy
 import com.capsulepal.app.domain.ReminderTrace
+import com.capsulepal.app.domain.TaskStepSchedule
 import com.capsulepal.app.domain.TriggerSuggestion
 import com.capsulepal.app.monitor.MonitorState
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -33,6 +36,7 @@ sealed interface NotificationPlan {
 class TaskNotificationCoordinator(
     private val context: Context,
     private val taskRepository: TaskRepository,
+    private val planRepository: PlanRepository,
     private val settingsRepository: SettingsRepository,
     private val chargingState: () -> MonitorState? = { null }
 ) {
@@ -140,7 +144,12 @@ class TaskNotificationCoordinator(
             chargingRetriggerTaskId = 0L
             chargingRetriggerSuppressedTaskId = 0L
         }
-        val content = NotificationContentFactory.fromTimeline(state, nowMillis, charging)
+        val planTitles = if (state.active?.task?.planId?.let { it != 0L } == true) {
+            planRepository.plans().associate { it.id to it.title }
+        } else {
+            emptyMap()
+        }
+        val content = NotificationContentFactory.fromTimeline(state, nowMillis, charging, planTitles)
         if (content == null) {
             // 没有待办上岛时，充电中优先展示充电实况。
             return buildChargingPlan(nowMillis)
@@ -187,10 +196,19 @@ class TaskNotificationCoordinator(
 
         // 充电时卡片里的时长/速度/温度要跟上，功率按 1 秒刷新才有实时感。
         val chargingNow = charging?.let { it.reading.charging || it.reading.plugged } == true
-        val refreshMillis = if (chargingNow) {
-            CHARGING_REFRESH_INTERVAL_MILLIS
+        // 步骤切换要在边界上准时刷新，其余时间仍按分钟走。
+        val stepBoundary = if (chargingNow) {
+            null
         } else {
-            60_000L
+            state.active
+                ?.takeIf { it.phase == TaskPhase.IN_PROGRESS }
+                ?.let { TaskStepSchedule.progress(it.task, nowMillis).nextBoundaryMillis }
+        }
+        val refreshMillis = when {
+            chargingNow -> CHARGING_REFRESH_INTERVAL_MILLIS
+            stepBoundary != null && stepBoundary > nowMillis ->
+                (stepBoundary - nowMillis).coerceIn(500L, 60_000L)
+            else -> 60_000L
         }
         return if (validation.eligible) {
             NotificationPlan.Live(liveNotification, content, refreshMillis)

@@ -3,6 +3,7 @@ package com.capsulepal.app.notifier
 import com.capsulepal.app.data.model.ActiveTask
 import com.capsulepal.app.data.model.Task
 import com.capsulepal.app.data.model.TaskPhase
+import com.capsulepal.app.data.model.TaskStep
 import com.capsulepal.app.data.model.TimelineState
 import com.capsulepal.app.data.model.UpcomingTask
 import com.capsulepal.app.monitor.BatteryReading
@@ -90,7 +91,56 @@ class NotificationContentFactoryTest {
             task.startMillis + 1_000L
         )
         assertEquals(NotificationPhase.IN_PROGRESS, content?.phase)
-        assertEquals("进行中 · 已进行 1 分钟 · 还剩 30 分钟", content?.text)
+        assertEquals("已进行 1 分钟 · 还剩 30 分钟", content?.text)
+    }
+
+    @Test
+    fun `plan task shows plan name and current step`() {
+        val task = task(prepareMinutes = 0).copy(
+            planId = 9L,
+            durationMinutes = 30,
+            steps = listOf(
+                TaskStep(order = 0, title = "列提纲", durationMinutes = 10),
+                TaskStep(order = 1, title = "写正文", durationMinutes = 20)
+            )
+        )
+        val active = ActiveTask(
+            task = task,
+            phase = TaskPhase.IN_PROGRESS,
+            windowStartMillis = task.startMillis,
+            windowEndMillis = task.endMillis
+        )
+        val content = NotificationContentFactory.fromTimeline(
+            TimelineState(active = active),
+            task.startMillis + 12 * 60_000L,
+            planTitles = mapOf(9L to "学习计划")
+        )
+
+        assertEquals("学习计划·写周报·写正文", content?.title)
+        assertEquals("已进行 12 分钟 · 当前步骤还剩 18 分钟", content?.text)
+        assertEquals("写正文", content?.shortText)
+    }
+
+    @Test
+    fun `steps finished early fall back to remaining minutes`() {
+        val task = task(prepareMinutes = 0).copy(
+            durationMinutes = 30,
+            steps = listOf(TaskStep(order = 0, title = "列提纲", durationMinutes = 10))
+        )
+        val active = ActiveTask(
+            task = task,
+            phase = TaskPhase.IN_PROGRESS,
+            windowStartMillis = task.startMillis,
+            windowEndMillis = task.endMillis
+        )
+        val content = NotificationContentFactory.fromTimeline(
+            TimelineState(active = active),
+            task.startMillis + 15 * 60_000L
+        )
+
+        assertEquals("写周报", content?.title)
+        assertEquals("已进行 15 分钟 · 还剩 15 分钟", content?.text)
+        assertEquals("", content?.shortText)
     }
 
     private fun chargingState(

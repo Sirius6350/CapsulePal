@@ -780,6 +780,23 @@ class CapsuleViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    /** 长按待办 → 挪到最近：进行中待办之后的下一个 5 分钟整点。 */
+    fun moveTaskToNearest(task: Task) {
+        viewModelScope.launch {
+            val activeEnd = uiState.value?.active
+                ?.takeIf { it.phase == com.capsulepal.app.data.model.TaskPhase.IN_PROGRESS }
+                ?.task?.endMillis
+            val target = container.moveTaskToNearest(task, activeEnd)
+            val clock = "%02d:%02d".format(target.hour, target.minute)
+            val today = LocalDate.now()
+            _message.value = if (target.toLocalDate() == today) {
+                "已把「${task.title}」挪到今天 $clock。"
+            } else {
+                "已把「${task.title}」挪到 ${target.monthValue} 月 ${target.dayOfMonth} 日 $clock。"
+            }
+        }
+    }
+
     fun saveDraft(draft: TaskDraft, onResult: (Boolean) -> Unit = {}) {
         viewModelScope.launch {
             if (draft.title.isBlank()) {

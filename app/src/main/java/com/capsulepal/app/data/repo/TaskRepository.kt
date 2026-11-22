@@ -423,6 +423,11 @@ class TaskRepository(
         taskDao.moveToDay(id, date.toEpochDay(), TaskStatus.IDLE.name)
     }
 
+    /** 「挪到最近」：把这一次挪到指定日期与时刻，状态回到待开始。 */
+    suspend fun moveToTime(id: Long, date: LocalDate, startMinute: Int) {
+        taskDao.reanchorToNow(id, date.toEpochDay(), startMinute, TaskStatus.IDLE.name)
+    }
+
     suspend fun awardedXp(id: Long): Int = taskDao.awardedXp(id) ?: 0
 
     suspend fun setStatusWithXp(id: Long, status: TaskStatus, awardedXp: Int) {

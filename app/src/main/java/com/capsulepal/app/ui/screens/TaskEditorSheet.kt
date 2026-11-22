@@ -6,6 +6,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -57,8 +58,10 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import android.widget.Toast
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -70,7 +73,10 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
@@ -179,6 +185,8 @@ fun TaskEditorSheet(
     var hour by remember { mutableIntStateOf(initial.startTime.hour) }
     var minute by remember { mutableIntStateOf(initial.startTime.minute) }
     var duration by remember { mutableIntStateOf(initial.durationMinutes) }
+    val context = LocalContext.current
+    val keyboard = LocalSoftwareKeyboardController.current
     var prepare by remember { mutableIntStateOf(initial.prepareMinutes) }
     var category by remember { mutableStateOf(initial.category) }
     var groupId by remember { mutableStateOf(initial.groupId) }
@@ -235,6 +243,11 @@ fun TaskEditorSheet(
     var editField by remember { mutableStateOf<String?>(null) }
     var editText by remember { mutableStateOf("") }
     var editingStep by remember { mutableStateOf(-1) }
+    // 步骤排序：点左侧序号后输入目标位置，规则与分类排序一致。
+    var editingStepOrder by remember { mutableIntStateOf(-1) }
+    var stepOrderInput by remember { mutableStateOf("") }
+    var stepOrderError by remember { mutableStateOf(false) }
+    val stepOrderFocus = remember { FocusRequester() }
     var showCalendar by remember { mutableStateOf(false) }
     val datePickerState = rememberDatePickerState()
     val durationPresets = listOf(5, 10, 15, 25, 30, 45, 60, 90)
@@ -277,6 +290,38 @@ fun TaskEditorSheet(
     BackHandler(onBack = requestDismiss)
     val dragState = rememberDraggableState { delta ->
         sheetOffset = (sheetOffset + delta).coerceIn(0f, sheetHeightPx)
+    }
+
+    LaunchedEffect(editingStepOrder) {
+        if (editingStepOrder >= 0) {
+            stepOrderError = false
+            stepOrderFocus.requestFocus()
+            keyboard?.show()
+        }
+    }
+
+    // 与分类排序一致：0 与负数按第 1 位处理，超出条目数则放到最后。
+    fun commitStepMove(from: Int) {
+        if (from !in steps.indices) {
+            editingStepOrder = -1
+            return
+        }
+        val number = stepOrderInput.trim().toIntOrNull()
+        if (number == null) {
+            stepOrderError = true
+            return
+        }
+        val destination = when {
+            number <= 1 -> 0
+            number > steps.size -> steps.lastIndex
+            else -> number - 1
+        }
+        if (destination != from) {
+            val step = steps.removeAt(from)
+            steps.add(destination, step)
+        }
+        editingStepOrder = -1
+        keyboard?.hide()
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -926,21 +971,82 @@ fun TaskEditorSheet(
                     }
                 }
 
-                Spacer(Modifier.height(18.dp))
-                FieldLabel("步骤（可选）")
-                steps.forEachIndexed { index, step ->
+                // 只有时长大于 5 分钟（不含 5 分钟整）才允许创建步骤。
+                if (duration > 5 || steps.isNotEmpty()) {
+                    Spacer(Modifier.height(18.dp))
+                    FieldLabel("步骤（可选）")
+                    Text(
+                        text = "点左侧序号输入位置即可调整步骤顺序",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 6.dp)
+                    )
+                    steps.forEachIndexed { index, step ->
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(vertical = 3.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "${index + 1}",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.width(20.dp)
-                        )
+                        if (editingStepOrder == index) {
+                            BasicTextField(
+                                value = stepOrderInput,
+                                onValueChange = { value ->
+                                    stepOrderInput = value.filter { it.isDigit() }.take(3)
+                                    stepOrderError = false
+                                },
+                                modifier = Modifier
+                                    .width(40.dp)
+                                    .height(40.dp)
+                                    .focusRequester(stepOrderFocus),
+                                textStyle = MaterialTheme.typography.labelMedium.copy(
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                ),
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(
+                                    keyboardType = KeyboardType.Number,
+                                    imeAction = ImeAction.Done
+                                ),
+                                keyboardActions = KeyboardActions(
+                                    onDone = { commitStepMove(index) }
+                                ),
+                                decorationBox = { innerTextField ->
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = MaterialTheme.colorScheme.surfaceVariant,
+                                        border = if (stepOrderError) {
+                                            BorderStroke(1.5.dp, MaterialTheme.colorScheme.error)
+                                        } else {
+                                            BorderStroke(1.dp, MaterialTheme.colorScheme.primary)
+                                        }
+                                    ) {
+                                        Box(
+                                            modifier = Modifier.fillMaxSize(),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            innerTextField()
+                                        }
+                                    }
+                                }
+                            )
+                        } else {
+                            Box(
+                                modifier = Modifier
+                                    .size(width = 40.dp, height = 36.dp)
+                                    .bounceClick {
+                                        editingStepOrder = index
+                                        stepOrderInput = ""
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "${index + 1}",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
                         OutlinedTextField(
                             value = step.title,
                             onValueChange = { value ->
@@ -968,7 +1074,10 @@ fun TaskEditorSheet(
                         Box(
                             modifier = Modifier
                                 .size(28.dp)
-                                .bounceClick { steps.removeAt(index) },
+                                .bounceClick {
+                                    steps.removeAt(index)
+                                    editingStepOrder = -1
+                                },
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
@@ -980,8 +1089,27 @@ fun TaskEditorSheet(
                         }
                     }
                 }
-                TextButton(onClick = { steps.add(TaskStepDraft(title = "", durationMinutes = 5)) }) {
-                    Text("+ 添加一个步骤", style = MaterialTheme.typography.labelMedium)
+                    if (duration > 5) {
+                        TextButton(
+                            onClick = {
+                                val remaining = duration - steps.sumOf { it.durationMinutes }
+                                if (remaining <= 0) {
+                                    Toast.makeText(
+                                        context,
+                                        "步骤总时长已达到待办时长上限",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                } else {
+                                    val default = if (steps.isEmpty()) 5 else minOf(5, remaining)
+                                    steps.add(
+                                        TaskStepDraft(title = "", durationMinutes = default)
+                                    )
+                                }
+                            }
+                        ) {
+                            Text("+ 添加一个步骤", style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
                 }
 
                 Spacer(Modifier.height(12.dp))
@@ -1216,8 +1344,12 @@ fun TaskEditorSheet(
                                 "step" -> {
                                     val index = editingStep
                                     if (index in steps.indices) {
+                                        val others = steps.indices
+                                            .filter { it != index }
+                                            .sumOf { steps[it].durationMinutes }
+                                        val maxForStep = (duration - others).coerceAtLeast(0)
                                         steps[index] = steps[index].copy(
-                                            durationMinutes = value.coerceIn(0, 600)
+                                            durationMinutes = value.coerceIn(0, maxForStep)
                                         )
                                     }
                                 }

@@ -17,7 +17,8 @@ class LiveUpdateNotifier(private val context: Context) {
         val accent = 0xFFE8735A.toInt()
         val charging = content.kind == IslandKind.CHARGING
         val style = NotificationCompat.ProgressStyle()
-            .setStyledByProgress(false)
+            // 待办岛按进度填充红条；充电岛保留整条电池色带。
+            .setStyledByProgress(!charging)
             .addProgressSegment(
                 NotificationCompat.ProgressStyle.Segment(content.max.coerceAtLeast(1))
                     .setColor(accent)
