@@ -452,7 +452,7 @@ private fun ReminderRuleList(
             confirmButton = {
                 TextButton(
                     onClick = {
-                        selectedIds.forEach { vm.deleteReminderRule(it) }
+                        vm.deleteReminderRules(selectedIds.toSet())
                         selectedIds.clear()
                         selectionMode = false
                         confirmDelete = false

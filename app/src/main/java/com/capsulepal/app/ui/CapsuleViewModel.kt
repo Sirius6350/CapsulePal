@@ -1074,10 +1074,16 @@ class CapsuleViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun deleteReminderRule(ruleId: Long) {
+        deleteReminderRules(setOf(ruleId))
+    }
+
+    /** 批量删除必须一次读、一次写：逐条删会各自基于同一份快照覆盖，最后只生效一条。 */
+    fun deleteReminderRules(ruleIds: Set<Long>) {
+        if (ruleIds.isEmpty()) return
         viewModelScope.launch {
             val current = container.settingsRepository.settings.first()
             container.settingsRepository.setReminderRules(
-                current.reminderRules.filterNot { it.id == ruleId }
+                current.reminderRules.filterNot { it.id in ruleIds }
             )
             container.onReminderSettingsChanged()
         }

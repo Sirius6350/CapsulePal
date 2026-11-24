@@ -533,7 +533,8 @@ fun TaskEditorSheet(
                 FieldLabel("持续多久")
                 val quickDurations = remember(durationPresets) { durationPresets.take(3) }
                 val restDurations = remember(durationPresets) { durationPresets.drop(3) }
-                val customDuration = duration !in durationPresets
+                // 从“更多”里选的预设或自定义时长，chip 直接显示具体时间，不再显示“更多”。
+                val inMoreDurations = duration !in quickDurations
                 var showMoreDurations by remember { mutableStateOf(false) }
                 Row(
                     modifier = Modifier.horizontalScroll(rememberScrollState()),
@@ -548,8 +549,12 @@ fun TaskEditorSheet(
                     }
                     Box {
                         ChoiceChip(
-                            text = if (customDuration) "${duration} 分钟" else "更多",
-                            selected = customDuration || duration in restDurations,
+                            text = if (inMoreDurations) {
+                                TimeUtils.formatDuration(duration)
+                            } else {
+                                "更多"
+                            },
+                            selected = inMoreDurations,
                             onClick = { showMoreDurations = true }
                         )
                         DropdownMenu(
@@ -585,7 +590,8 @@ fun TaskEditorSheet(
                 val restPrepares = remember(preparePresets) {
                     preparePresets.filter { it != 0 && it !in quickPrepares }
                 }
-                val customPrepare = prepare != 0 && prepare !in preparePresets
+                // 从“更多”里选的预设或自定义提前量，chip 直接显示具体时间。
+                val inMorePrepares = prepare != 0 && prepare !in quickPrepares
                 var showMorePrepares by remember { mutableStateOf(false) }
                 Row(
                     modifier = Modifier.horizontalScroll(rememberScrollState()),
@@ -605,8 +611,8 @@ fun TaskEditorSheet(
                     }
                     Box {
                         ChoiceChip(
-                            text = if (customPrepare) "${prepare} 分钟" else "更多",
-                            selected = customPrepare || prepare in restPrepares,
+                            text = if (inMorePrepares) "$prepare 分钟" else "更多",
+                            selected = inMorePrepares,
                             onClick = { showMorePrepares = true }
                         )
                         DropdownMenu(

@@ -2,6 +2,7 @@ package com.capsulepal.app.signals
 
 import android.Manifest
 import android.app.AppOpsManager
+import android.app.PendingIntent
 import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
 import android.bluetooth.BluetoothDevice
@@ -30,6 +31,7 @@ import android.telephony.TelephonyManager
 import androidx.core.content.ContextCompat
 import com.capsulepal.app.domain.SignalType
 import com.capsulepal.app.domain.SystemSignal
+import com.capsulepal.app.scheduler.SystemSignalReceiver
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -195,6 +197,19 @@ class WifiSignalSource(
      */
     private var baselineToken: Any? = null
 
+    /** 后台唤醒时名称暂不可读：先按「任意 WiFi」提醒，等名称可读后只补基线。 */
+    @Volatile
+    private var pendingSsidAdopt = false
+
+    /** 系统级网络唤醒：进程被回收后，连上 WiFi 也能把 App 拉起来判断规则。 */
+    private var wakeRegistered = false
+    private var wakePendingIntent: PendingIntent? = null
+
+    /** 跨进程记录「最近一次提醒过的 WiFi」，避免冷启动时重复提醒同一次连接。 */
+    private val prefs by lazy {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    }
+
     private fun currentSsid(): String = WifiSsidReader.currentSsid(context)
 
     /** 当前活动的 WiFi 网络；VPN 等场景下活动网络不是 WiFi 时，取任意已连接的 WiFi。 */
@@ -238,6 +253,15 @@ class WifiSignalSource(
         val ssid = WifiSsidReader.sanitize(ssidRaw)
         if (ssid.isNotEmpty()) {
             val now = SystemClock.elapsedRealtime()
+            if (pendingSsidAdopt && (token == null || lastToken == null || token == lastToken)) {
+                // 后台唤醒时先按「任意 WiFi」提醒过，这里只把名称补进基线。
+                pendingSsidAdopt = false
+                lastSsid = ssid
+                if (token != null) lastToken = token
+                baselineToken = null
+                return
+            }
+            pendingSsidAdopt = false
             if (ssid == lastSsid) {
                 // 名称没变但网络标识变了：多半是断开后又连回同一个 WiFi。
                 // 一次连接会同时走回调和广播两条路，间隔很短的变化不当成重连。
@@ -245,6 +269,7 @@ class WifiSignalSource(
                 if (switched && now - lastEmitAt >= SAME_SSID_REEMIT_GAP_MILLIS) {
                     lastToken = token
                     lastEmitAt = now
+                    rememberReminderSsid(ssid)
                     emit(SystemSignal(SignalType.WIFI_CONNECTED, detail = ssid))
                 } else if (token != null) {
                     lastToken = token
@@ -263,6 +288,7 @@ class WifiSignalSource(
             lastToken = token
             baselineToken = null
             lastEmitAt = now
+            rememberReminderSsid(ssid)
             emit(SystemSignal(SignalType.WIFI_CONNECTED, detail = ssid))
             return
         }
@@ -272,6 +298,95 @@ class WifiSignalSource(
             lastEmitAt = SystemClock.elapsedRealtime()
             emit(SystemSignal(SignalType.WIFI_CONNECTED))
         }
+    }
+
+    /**
+     * 注册/注销系统级网络唤醒。
+     *
+     * WiFi 连接广播不在清单接收器可用的例外列表里，进程被回收后，
+     * 只有 PendingIntent 版的网络回调能把 App 拉起来判断规则。
+     */
+    @Synchronized
+    fun setWakeEnabled(enabled: Boolean) {
+        val manager = connectivityManager ?: return
+        if (enabled) {
+            if (wakeRegistered) return
+            val pending = PendingIntent.getBroadcast(
+                context,
+                WAKE_REQUEST_CODE,
+                Intent(context, SystemSignalReceiver::class.java)
+                    .setAction(SystemSignalReceiver.ACTION_WIFI_AVAILABLE),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val request = NetworkRequest.Builder()
+                .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+                .build()
+            val registered = runCatching {
+                manager.registerNetworkCallback(request, pending)
+            }.isSuccess
+            if (registered) {
+                wakePendingIntent = pending
+                wakeRegistered = true
+            }
+        } else {
+            if (!wakeRegistered) return
+            wakePendingIntent?.let { pending ->
+                runCatching { manager.unregisterNetworkCallback(pending) }
+            }
+            wakePendingIntent = null
+            wakeRegistered = false
+        }
+    }
+
+    /**
+     * 后台唤醒路径：这次连接是否还需要补发提醒。
+     * 进程内回调已经处理过的连接不再重复提醒，冷启动则按跨进程记录去重。
+     *
+     * @param adoptWhenUnreadable 名称读不到且规则是「任意 WiFi」时先提醒一次，
+     * 之后名称可读只补基线，避免同一次连接弹两条。
+     */
+    @Synchronized
+    fun claimWakeConnection(ssidRaw: String?, adoptWhenUnreadable: Boolean): Boolean {
+        val ssid = WifiSsidReader.sanitize(ssidRaw)
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastEmitAt < WAKE_DUPLICATE_WINDOW_MILLIS) return false
+        val token = connectedWifiNetwork()
+        if (ssid.isNotEmpty() && ssid == reminderSsid()) {
+            // 同一次连接在进程被杀前已经提醒过：只补基线。
+            lastSsid = ssid
+            if (token != null) lastToken = token
+            baselineToken = null
+            pendingSsidAdopt = false
+            return false
+        }
+        if (ssid.isEmpty() && !adoptWhenUnreadable) {
+            // 规则指定了 WiFi 名称，读不到名称就无法判断，等名称可读后再提醒。
+            return false
+        }
+        lastEmitAt = now
+        baselineToken = null
+        if (ssid.isNotEmpty()) {
+            lastSsid = ssid
+            if (token != null) lastToken = token
+            pendingSsidAdopt = false
+            rememberReminderSsid(ssid)
+        } else {
+            // 名称暂时读不到：先按「任意 WiFi」提醒，等名称可读后只补基线。
+            lastSsid = ""
+            if (token != null) lastToken = token
+            pendingSsidAdopt = true
+        }
+        return true
+    }
+
+    private fun reminderSsid(): String = prefs.getString(KEY_LAST_SSID, "").orEmpty()
+
+    private fun rememberReminderSsid(ssid: String) {
+        prefs.edit().putString(KEY_LAST_SSID, ssid).apply()
+    }
+
+    private fun forgetReminderSsid() {
+        prefs.edit().remove(KEY_LAST_SSID).apply()
     }
 
     /**
@@ -326,6 +441,8 @@ class WifiSignalSource(
         ssidRetryJob?.cancel()
         ssidRetryJob = null
         baselineToken = null
+        pendingSsidAdopt = false
+        forgetReminderSsid()
         val hadWifi = lastSsid.isNotEmpty() || lastToken != null
         lastSsid = ""
         lastToken = null
@@ -404,6 +521,7 @@ class WifiSignalSource(
         val connected = connectedWifiNetwork()
         lastToken = connected
         baselineToken = connected.takeIf { lastSsid.isEmpty() }
+        pendingSsidAdopt = false
 
         val request = NetworkRequest.Builder()
             .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
@@ -447,6 +565,7 @@ class WifiSignalSource(
         lastSsid = ""
         lastToken = null
         baselineToken = null
+        pendingSsidAdopt = false
     }
 
     private companion object {
@@ -458,6 +577,15 @@ class WifiSignalSource(
 
         /** 同一 SSID 短时间内的网络标识变化视为双通道重复，不重复提醒。 */
         const val SAME_SSID_REEMIT_GAP_MILLIS = 3_000L
+
+        /** 系统级网络唤醒的 PendingIntent 请求码。 */
+        const val WAKE_REQUEST_CODE = 1009
+
+        /** 进程内回调与后台唤醒几乎同时到达时，只保留一次提醒。 */
+        const val WAKE_DUPLICATE_WINDOW_MILLIS = 3_000L
+
+        const val PREFS_NAME = "wifi_signal"
+        const val KEY_LAST_SSID = "last_ssid"
     }
 }
 
@@ -682,8 +810,15 @@ class AppUsageSignalSource(
                     continue
                 }
                 val now = System.currentTimeMillis()
+                // 进程被冻结或系统休眠后，lastPoll 会停在很久以前；
+                // 直接回放整段旧事件会在用户回到 App 时补出过时提醒。
+                val from = if (now - lastPoll > STALE_GAP_MILLIS) {
+                    now - RECENT_WINDOW_MILLIS
+                } else {
+                    lastPoll
+                }
                 val usageEvents = runCatching {
-                    usageStats?.queryEvents(lastPoll, now)
+                    usageStats?.queryEvents(from, now)
                 }.getOrNull()
                 lastPoll = now
                 if (usageEvents == null) continue
@@ -728,6 +863,12 @@ class AppUsageSignalSource(
 
     private companion object {
         const val POLL_INTERVAL_MILLIS = 3_000L
+
+        /** 轮询间隔超过这个值，说明进程中途被冻结/系统休眠过，不能回放整段事件。 */
+        const val STALE_GAP_MILLIS = 30_000L
+
+        /** 暂停恢复后只回看最近这段事件，避免补出已经过时的应用启动提醒。 */
+        const val RECENT_WINDOW_MILLIS = 10_000L
     }
 }
 

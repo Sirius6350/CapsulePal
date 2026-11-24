@@ -46,6 +46,7 @@ import com.capsulepal.app.service.MetricOverlayController
 import com.capsulepal.app.service.OverlayDotController
 import com.capsulepal.app.signals.SystemSignalProvider
 import com.capsulepal.app.signals.UsageAccess
+import com.capsulepal.app.signals.WifiSsidReader
 import com.capsulepal.app.widget.CapsuleWidgets
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -274,6 +275,9 @@ class AppContainer(context: Context) {
         if (foreground) {
             batteryMonitor.poke()
             CapsuleWidgets.requestUpdate(appContext, 5_000L)
+            // 进程在后台被系统回收时前台服务可能没起来（后台不允许启动），
+            // 回到前台立刻补一次，避免 WiFi / 应用启动这类纯进程内监听失效。
+            syncBackgroundWatch()
             appScope.launch {
                 sweepFinishedTasks()
                 refreshCalendarNow()
@@ -684,9 +688,41 @@ class AppContainer(context: Context) {
 
     fun scheduleOffsetTick(minutes: Int) = scheduler.scheduleOffsetTick(minutes)
 
-    /** 系统广播唤醒进程后直接投递信号，避免必须等 App 打开。 */
-    fun onExternalSignal(signal: SystemSignal) {
-        appScope.launch { evaluateSignal(signal) }
+    /**
+     * 系统广播唤醒进程后直接投递信号，避免必须等 App 打开。
+     * 被唤醒的进程可能在协程结束前被冻结，所以等提醒真正发出
+     * （含仲裁窗口）再返回，配合接收器的 goAsync 一起保活。
+     */
+    suspend fun onExternalSignal(signal: SystemSignal) {
+        evaluateSignal(signal)
+        arbitrationJob?.join()
+    }
+
+    /**
+     * WiFi 连接的系统级唤醒（见 WifiSignalSource.setWakeEnabled）。
+     * 进程刚被拉起时 SSID 可能还读不到，先补读几次再判断规则。
+     */
+    suspend fun onWifiWake() {
+        val settings = settingsRepository.settings.first()
+        if (!settings.version.showReminders) return
+        val wifiRules = settings.reminderRules.filter {
+            it.enabled && it.type == ReminderTriggerType.WIFI
+        }
+        if (wifiRules.isEmpty()) return
+        // 规则指定了 WiFi 名称时，名称读不到就没法判断，先多等一会儿；
+        // 「任意 WiFi」则允许在名称读不到时先提醒。
+        val adoptWhenUnreadable = wifiRules.any { it.wifiSsid.isBlank() }
+        val retries = if (adoptWhenUnreadable) WAKE_SSID_RETRIES else WAKE_SSID_RETRIES * 2
+        var ssid = WifiSsidReader.currentSsid(appContext)
+        var attempt = 0
+        while (ssid.isEmpty() && attempt < retries) {
+            delay(WAKE_SSID_RETRY_DELAY_MILLIS)
+            ssid = WifiSsidReader.currentSsid(appContext)
+            attempt++
+        }
+        if (!signals.claimWifiWake(ssid, adoptWhenUnreadable)) return
+        evaluateSignal(SystemSignal(SignalType.WIFI_CONNECTED, detail = ssid))
+        arbitrationJob?.join()
     }
 
     /** 日历轻量心跳：检查即将开始的系统日程，并重新安排下一次精确闹钟。 */
@@ -736,6 +772,13 @@ class AppContainer(context: Context) {
                 it.enabled && it.type.needsBackgroundWatch &&
                     (settings.version.showTodoPage || it.action == ReminderActionType.CUSTOM)
             }
+        // WiFi 连接没有可唤醒进程的清单广播：只要还有启用的 WiFi 规则，
+        // 就常驻一个系统级网络唤醒，进程被回收后也能立刻拉起判断。
+        val wifiRuleActive = settings.version.showReminders && settings.reminderRules.any {
+            it.enabled && it.type == ReminderTriggerType.WIFI &&
+                (settings.version.showTodoPage || it.action == ReminderActionType.CUSTOM)
+        }
+        signals.setWifiWakeEnabled(wifiRuleActive)
         val needsMetrics = settings.version.showFloatingMetrics && settings.metricOverlayEnabled
         // 极客体验：所有采样都依赖常驻前台服务，即使不显示指标悬浮窗也要跑。
         // 其它版本开启「为极客采样」且高频轮询在跑时，同样常驻以保证数据连续。
@@ -954,5 +997,9 @@ class AppContainer(context: Context) {
 
     private companion object {
         const val ARBITRATION_WINDOW_MILLIS = 3_000L
+
+        /** 网络唤醒后补读 SSID 的次数与间隔：进程刚拉起时名称常常还读不到。 */
+        const val WAKE_SSID_RETRIES = 4
+        const val WAKE_SSID_RETRY_DELAY_MILLIS = 400L
     }
 }

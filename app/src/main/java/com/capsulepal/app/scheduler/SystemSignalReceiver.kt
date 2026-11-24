@@ -10,17 +10,28 @@ import com.capsulepal.app.CapsuleApp
 import com.capsulepal.app.domain.SignalType
 import com.capsulepal.app.domain.SystemSignal
 import com.capsulepal.app.signals.BluetoothDeviceReader
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 /**
  * 清单注册的系统信号接收器。
  *
  * 充电、耳机、通话这类广播可以在 App 进程被回收后唤醒进程，
  * 让主动提醒不必依赖 App 一直停留在前台。
+ *
+ * WiFi 连接没有可用的清单广播，改由 PendingIntent 版网络回调唤醒
+ * （见 [WifiSignalSource.setWakeEnabled]），拉起后统一走 [ACTION_WIFI_AVAILABLE]。
  */
 class SystemSignalReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
         val app = context.applicationContext as? CapsuleApp ?: return
+        if (intent.action == ACTION_WIFI_AVAILABLE) {
+            deliver(app) { app.container.onWifiWake() }
+            return
+        }
         val signal = when (intent.action) {
             Intent.ACTION_POWER_CONNECTED -> SystemSignal(SignalType.POWER_CONNECTED)
             Intent.ACTION_POWER_DISCONNECTED -> SystemSignal(SignalType.POWER_DISCONNECTED)
@@ -76,11 +87,29 @@ class SystemSignalReceiver : BroadcastReceiver() {
             }
             else -> return
         }
-        app.container.onExternalSignal(signal)
+        deliver(app) { app.container.onExternalSignal(signal) }
     }
 
-    private companion object {
+    /**
+     * 被广播唤醒的进程在 onReceive 返回后随时可能被冻结，
+     * 用 goAsync 把进程撑到提醒真正发出（含 3 秒仲裁窗口），避免提醒丢失。
+     */
+    private fun deliver(app: CapsuleApp, block: suspend () -> Unit) {
+        val pending = goAsync()
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            try {
+                runCatching { block() }
+            } finally {
+                pending.finish()
+            }
+        }
+    }
+
+    companion object {
+        /** 系统级网络唤醒广播（由 PendingIntent 发出，不需要清单 intent-filter）。 */
+        const val ACTION_WIFI_AVAILABLE = "com.capsulepal.app.action.WIFI_AVAILABLE"
+
         /** 进程存活期间记住上一通电话状态，避免未接来电也触发“通话结束”。 */
-        var lastCallState = TelephonyManager.CALL_STATE_IDLE
+        private var lastCallState = TelephonyManager.CALL_STATE_IDLE
     }
 }
