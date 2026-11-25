@@ -55,6 +55,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.time.LocalDate
@@ -85,6 +86,19 @@ class AppContainer(context: Context) {
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     private val database = CapsuleDatabase.get(appContext)
+
+    /**
+     * 桌面组件的数据不经过 ViewModel，这里用 Room 的失效通知统一驱动：
+     * 待办的任何写入（新建、完成、撤销、删除、通知栏操作、跨天结算）都会立刻推一次组件，
+     * 且绕过节流，解决「组件不跟着 app 更新」的根因。
+     */
+    init {
+        appScope.launch {
+            database.invalidationTracker.createFlow("tasks").collect {
+                CapsuleWidgets.requestUpdate(appContext, 0L, force = true)
+            }
+        }
+    }
 
     val taskRepository = TaskRepository(
         database.taskDao(),
@@ -278,6 +292,8 @@ class AppContainer(context: Context) {
             // 进程在后台被系统回收时前台服务可能没起来（后台不允许启动），
             // 回到前台立刻补一次，避免 WiFi / 应用启动这类纯进程内监听失效。
             syncBackgroundWatch()
+            // 不再等系统回调或下一轮轮询：直接对一次当前 WiFi 状态。
+            signals.checkWifiNow()
             appScope.launch {
                 sweepFinishedTasks()
                 refreshCalendarNow()
@@ -679,6 +695,8 @@ class AppContainer(context: Context) {
     suspend fun rescheduleAll() {
         _exactAlarmAvailable.value = scheduler.canScheduleExact()
         rescheduleVisibleTasks()
+        // 每日 00:05 的唤醒同时把组件拉到新的一天，不必等下一次点击或 30 分钟轮询。
+        CapsuleWidgets.requestUpdate(appContext, 0L, force = true)
     }
 
     fun dismissSuggestion() {
@@ -703,16 +721,20 @@ class AppContainer(context: Context) {
      * 进程刚被拉起时 SSID 可能还读不到，先补读几次再判断规则。
      */
     suspend fun onWifiWake() {
+        ReminderTrace.record("WiFi", "收到系统网络唤醒，开始判断", true)
         val settings = settingsRepository.settings.first()
         if (!settings.version.showReminders) return
         val wifiRules = settings.reminderRules.filter {
             it.enabled && it.type == ReminderTriggerType.WIFI
         }
-        if (wifiRules.isEmpty()) return
+        if (wifiRules.isEmpty()) {
+            ReminderTrace.record("WiFi", "唤醒到达，但没有启用中的 WiFi 规则，跳过", false)
+            return
+        }
         // 规则指定了 WiFi 名称时，名称读不到就没法判断，先多等一会儿；
         // 「任意 WiFi」则允许在名称读不到时先提醒。
         val adoptWhenUnreadable = wifiRules.any { it.wifiSsid.isBlank() }
-        val retries = if (adoptWhenUnreadable) WAKE_SSID_RETRIES else WAKE_SSID_RETRIES * 2
+        val retries = if (adoptWhenUnreadable) 0 else WAKE_SSID_RETRIES
         var ssid = WifiSsidReader.currentSsid(appContext)
         var attempt = 0
         while (ssid.isEmpty() && attempt < retries) {
@@ -720,7 +742,28 @@ class AppContainer(context: Context) {
             ssid = WifiSsidReader.currentSsid(appContext)
             attempt++
         }
-        if (!signals.claimWifiWake(ssid, adoptWhenUnreadable)) return
+        if (ssid.isEmpty() && !adoptWhenUnreadable) {
+            // 指定了 WiFi 名称却读不到名字：多半是后台被系统屏蔽了 SSID
+            // （只有「仅在使用中」的定位权限，或没给 Android 13+ 的「附近的设备」）。
+            val perm = when {
+                WifiSsidReader.hasNearbyPermission(appContext) -> "附近设备已授权"
+                WifiSsidReader.hasLocationPermission(appContext) -> "只有定位权限"
+                else -> "未授权"
+            }
+            ReminderTrace.record(
+                "WiFi",
+                "系统唤醒：读不到网络名（$perm），无法匹配指定 WiFi",
+                false
+            )
+        }
+        if (!signals.claimWifiWake(ssid, adoptWhenUnreadable)) {
+            ReminderTrace.record(
+                "WiFi",
+                "系统唤醒：${ssid.ifBlank { "名称不可读" }} 判定为同一次连接，跳过",
+                false
+            )
+            return
+        }
         evaluateSignal(SystemSignal(SignalType.WIFI_CONNECTED, detail = ssid))
         arbitrationJob?.join()
     }
@@ -868,8 +911,10 @@ class AppContainer(context: Context) {
             recordNoSuggestion(signal, settings)
             return
         }
+        // 用规则名而不是触发类型名，否则「名叫充电的 WiFi 规则」会被误读成充电提醒。
+        val firstRule = settings.reminderRules.firstOrNull { it.id == suggestions.first().ruleId }
         ReminderTrace.record(
-            suggestions.first().type.label,
+            firstRule?.displayName?.ifBlank { null } ?: suggestions.first().type.label,
             "收到触发，生成 ${suggestions.size} 条候选",
             true
         )
@@ -939,6 +984,31 @@ class AppContainer(context: Context) {
         }
 
         val chosen = allowed ?: return
+        // 同批被压掉的候选：同类型只算重复，直接跳过；不同类型是两条独立规则，
+        // 延后一小会儿补发，避免「连 WiFi + 插充电」时 WiFi 提醒被永久吃掉。
+        val deferred = mutableListOf<ReminderCandidate>()
+        batch.filter { it !== chosen }.forEach { skipped ->
+            if (skipped.suggestion.type == chosen.suggestion.type) {
+                ReminderTrace.record(
+                    skipped.suggestion.ruleName,
+                    "同批已有更高优先级提醒（${allowedTitle}），本次跳过",
+                    false
+                )
+            } else {
+                ReminderTrace.record(
+                    skipped.suggestion.ruleName,
+                    "同批被 ${allowedTitle} 抢先，${REQUEUE_DELAY_MILLIS / 1000} 秒后补发",
+                    true
+                )
+                deferred += skipped
+            }
+        }
+        if (deferred.isNotEmpty()) {
+            appScope.launch {
+                delay(REQUEUE_DELAY_MILLIS)
+                showFirstAllowed(deferred)
+            }
+        }
         _triggerSuggestion.value = chosen.suggestion
         val task = chosen.suggestion.taskId?.let { taskRepository.task(it) }
         val canPost = NotificationValidator.hasPostPermission(appContext)
@@ -954,14 +1024,29 @@ class AppContainer(context: Context) {
     private fun recordNoSuggestion(signal: SystemSignal, settings: AppSettings) {
         val type = signal.type.toReminderTriggerType() ?: return
         if (settings.reminderRules.none { it.enabled && it.type == type }) return
-        val detail = if (
+        val taskLinkedOnly = !settings.version.showTodoPage &&
+            settings.reminderRules.none {
+                it.enabled && it.type == type && it.action == ReminderActionType.CUSTOM
+            }
+        val detail = if (taskLinkedOnly) {
+            "极客体验版不触发关联待办的规则，切回完整本体后才会响"
+        } else if (
             settings.mediaSilenceEnabled &&
             signals.mediaPlaying.value &&
             type != ReminderTriggerType.CALENDAR_SOON
         ) {
             "触发已到达，但正在播放媒体，按“媒体静默”跳过"
         } else if (signal.type == SignalType.WIFI_CONNECTED) {
-            "收到 WiFi 连接（${signal.detail.ifBlank { "名称不可读" }}），但规则条件未匹配"
+            if (signal.detail.isBlank()) {
+                val perm = when {
+                    WifiSsidReader.hasNearbyPermission(appContext) -> "附近设备已授权"
+                    WifiSsidReader.hasLocationPermission(appContext) -> "只有定位权限"
+                    else -> "未授权"
+                }
+                "后台读不到网络名（$perm），指定 WiFi 的规则无法判断"
+            } else {
+                "收到 WiFi 连接（${signal.detail}），但规则条件未匹配"
+            }
         } else {
             "触发已到达，但规则条件未匹配（星期/时段/对象/提前量）"
         }
@@ -998,8 +1083,11 @@ class AppContainer(context: Context) {
     private companion object {
         const val ARBITRATION_WINDOW_MILLIS = 3_000L
 
+        /** 同批不同类型被压掉后，隔多久补发（避免两条通知同时响）。 */
+        const val REQUEUE_DELAY_MILLIS = 8_000L
+
         /** 网络唤醒后补读 SSID 的次数与间隔：进程刚拉起时名称常常还读不到。 */
-        const val WAKE_SSID_RETRIES = 4
-        const val WAKE_SSID_RETRY_DELAY_MILLIS = 400L
+        const val WAKE_SSID_RETRIES = 2
+        const val WAKE_SSID_RETRY_DELAY_MILLIS = 600L
     }
 }

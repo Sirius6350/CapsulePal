@@ -173,10 +173,15 @@ fun ReminderRulesScreen(
     fun requestPermission(type: ReminderTriggerType) {
         when (type) {
             ReminderTriggerType.WIFI -> locationLauncher.launch(
-                arrayOf(
-                    Manifest.permission.ACCESS_FINE_LOCATION,
-                    Manifest.permission.ACCESS_COARSE_LOCATION
-                )
+                buildList {
+                    add(Manifest.permission.ACCESS_FINE_LOCATION)
+                    add(Manifest.permission.ACCESS_COARSE_LOCATION)
+                    // Android 13+ 单独申请「附近的设备」：只有定位权限时，
+                    // 系统在后台会把 WiFi 名称抹掉，规则就永远匹配不上。
+                    if (Build.VERSION.SDK_INT >= 33) {
+                        add(Manifest.permission.NEARBY_WIFI_DEVICES)
+                    }
+                }.toTypedArray()
             )
             ReminderTriggerType.BLUETOOTH ->
                 bluetoothLauncher.launch(Manifest.permission.BLUETOOTH_CONNECT)
@@ -830,11 +835,12 @@ private fun PermissionCard(
             onRequestCalendar
         )
         PermissionLine(
-            "定位",
-            "仅用于读取当前 WiFi 名称",
+            "WiFi 名称",
+            "读取当前网络名；后台读取需要「附近的设备」或始终允许的定位",
             permissions.location,
             onRequestLocation
         )
+        BackgroundLocationLine()
         PermissionLine(
             "附近的设备",
             "读取蓝牙设备名",
@@ -852,6 +858,39 @@ private fun PermissionCard(
             "检测打开了哪个应用",
             permissions.usageAccess,
             onRequestUsage
+        )
+    }
+}
+
+/**
+ * Android 10+ 只给「仅在使用中」的定位时，后台会把 SSID 抹成 <unknown ssid>。
+ * 部分 ROM（如 ColorOS）不受理「附近的设备」，此时只能靠「始终允许」的定位。
+ * 后台定位不能弹窗申请，只能把用户送到应用设置页手动改。
+ */
+@Composable
+private fun BackgroundLocationLine() {
+    val context = LocalContext.current
+    var granted by remember { mutableStateOf(WifiSsidReader.hasBackgroundLocation(context)) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                granted = WifiSsidReader.hasBackgroundLocation(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    PermissionLine(
+        "后台定位",
+        "在设置里改为「始终允许」，后台才能读到 WiFi 名称",
+        granted
+    ) {
+        context.startActivity(
+            Intent(
+                android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                android.net.Uri.fromParts("package", context.packageName, null)
+            )
         )
     }
 }
@@ -1414,9 +1453,11 @@ private fun ConditionCard(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     OutlinedPillButton("读取当前 WiFi") {
-                        if (!permissions.location) {
+                        if (!WifiSsidReader.canReadSsid(context)) {
                             onRequestPermission(ReminderTriggerType.WIFI)
-                        } else if (!WifiSsidReader.locationEnabled(context)) {
+                        } else if (!WifiSsidReader.hasNearbyPermission(context) &&
+                            !WifiSsidReader.locationEnabled(context)
+                        ) {
                             Toast.makeText(
                                 context,
                                 "请先打开系统定位服务，再读取 WiFi 名称",
@@ -2765,7 +2806,7 @@ private fun TaskPickerDialog(
 
 private fun missingPermission(rule: ReminderRule, permissions: PermissionState): String? = when {
     rule.type == ReminderTriggerType.WIFI && rule.wifiSsid.isNotBlank() &&
-        !permissions.location -> "定位"
+        !permissions.location -> "WiFi 名称"
     rule.type == ReminderTriggerType.BLUETOOTH &&
         (rule.bluetoothName.isNotBlank() || rule.bluetoothAddress.isNotBlank()) &&
         !permissions.bluetooth -> "附近的设备"

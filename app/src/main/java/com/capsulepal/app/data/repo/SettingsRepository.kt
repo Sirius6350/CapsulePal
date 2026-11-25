@@ -88,6 +88,8 @@ class SettingsRepository(context: Context) {
                 }.getOrDefault(OverduePolicy.MARK_DONE),
                 hideFinishedAfterDay = prefs[Keys.HIDE_FINISHED_AFTER_DAY] ?: true,
                 version = CapsuleVersion.fromName(prefs[Keys.VERSION]),
+                lastNonGeekVersion = CapsuleVersion.fromName(prefs[Keys.LAST_NON_GEEK_VERSION])
+                    .takeIf { !it.isGeek && it.showTodoPage } ?: CapsuleVersion.FULL,
                 metricOverlayEnabled = prefs[Keys.METRIC_OVERLAY_ENABLED] ?: false,
                 metricOverlayAlphaPercent = (prefs[Keys.METRIC_OVERLAY_ALPHA] ?: 80)
                     .coerceIn(10, 100),
@@ -260,6 +262,8 @@ class SettingsRepository(context: Context) {
                     prefs[Keys.BATTERY_HIGH_FREQ_BEFORE_GEEK] ?: false
             }
             prefs[Keys.VERSION] = version.name
+            // 记住最近一次的非极客版本，极客版下从长按菜单进待办时切回来。
+            if (!isGeek) prefs[Keys.LAST_NON_GEEK_VERSION] = version.name
         }
     }
 
@@ -487,6 +491,9 @@ class SettingsRepository(context: Context) {
 
         /** 当前版本（CapsuleVersion.name）；版本本身不进备份。 */
         val VERSION = stringPreferencesKey("capsule_version")
+
+        /** 最近一次的非极客版本，极客版下创建待办时切回。 */
+        val LAST_NON_GEEK_VERSION = stringPreferencesKey("last_non_geek_version")
 
         /** 极客版独立指标悬浮窗。 */
         val METRIC_OVERLAY_ENABLED = booleanPreferencesKey("metric_overlay_enabled")

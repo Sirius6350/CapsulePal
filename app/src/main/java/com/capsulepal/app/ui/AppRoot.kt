@@ -58,6 +58,8 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.capsulepal.app.R
+import com.capsulepal.app.CapsuleApp
+import com.capsulepal.app.MainActivity
 import com.capsulepal.app.data.model.AppSettings
 import com.capsulepal.app.data.model.CapsulePage
 import com.capsulepal.app.data.model.CapsuleVersion
@@ -114,7 +116,9 @@ private fun CapsulePage.iconRes(): Int = when (this) {
 @Composable
 fun AppRoot(
     requestedPage: CapsulePage? = null,
-    onRequestHandled: () -> Unit = {}
+    onRequestHandled: () -> Unit = {},
+    quickAction: String? = null,
+    onQuickActionHandled: () -> Unit = {}
 ) {
     val vm: CapsuleViewModel = viewModel()
     val state by vm.uiState.collectAsStateWithLifecycle()
@@ -144,6 +148,9 @@ fun AppRoot(
     var showSchedule by rememberSaveable { mutableStateOf(false) }
     var showSummary by rememberSaveable { mutableStateOf(false) }
     var showSettings by rememberSaveable { mutableStateOf(false) }
+    var showInstantCapture by remember { mutableStateOf(false) }
+    /** 长按菜单待执行的动作；极客版下要先切版本，所以不能立刻消费。 */
+    var pendingQuickAction by remember { mutableStateOf<String?>(null) }
 
     val current = state
     if (current == null) {
@@ -168,6 +175,32 @@ fun AppRoot(
             tab = page
         }
         onRequestHandled()
+    }
+
+    // 长按图标：先记下动作；极客体验没有待办模块，等切回非极客版本后再执行。
+    LaunchedEffect(quickAction) {
+        val action = quickAction ?: return@LaunchedEffect
+        pendingQuickAction = action
+        onQuickActionHandled()
+    }
+
+    LaunchedEffect(pendingQuickAction, version) {
+        val action = pendingQuickAction ?: return@LaunchedEffect
+        if (!version.showTodoPage) {
+            val target = current.settings.lastNonGeekVersion
+            vm.setVersion(if (target.showTodoPage) target else CapsuleVersion.FULL)
+            return@LaunchedEffect
+        }
+        pendingQuickAction = null
+        when (action) {
+            MainActivity.ACTION_CREATE_TODO -> {
+                tab = CapsulePage.TODAY
+                editorPlan = null
+                editorKind = TaskKind.NORMAL
+                editor = newTaskDraft(current.date, current.settings.defaultCategory())
+            }
+            MainActivity.ACTION_INSTANT_CAPTURE -> showInstantCapture = true
+        }
     }
 
     CapsuleTheme(version = version) {
@@ -466,6 +499,22 @@ fun AppRoot(
                     saving = editorSaving
                 )
             }
+        }
+
+        if (showInstantCapture) {
+            val container = (context.applicationContext as CapsuleApp).container
+            val existingInstant = remember(showInstantCapture) {
+                container.instantTodoRepository.current()
+            }
+            InstantCaptureDialog(
+                existing = existingInstant,
+                onCreate = container::createInstantTodo,
+                onComplete = {
+                    container.completeInstantTodo()
+                    showInstantCapture = false
+                },
+                onDismiss = { showInstantCapture = false }
+            )
         }
 
         if (!current.settings.noticeAccepted) {

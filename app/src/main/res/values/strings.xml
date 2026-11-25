@@ -23,4 +23,8 @@
     <string name="widget_instant_desc">点一下就能记一件事，创建后立刻上岛</string>
     <string name="widget_instant_capture_title">即时待办</string>
     <string name="widget_instant_capture_hint">例如：马上回个电话</string>
+
+    <!-- 长按应用图标 -->
+    <string name="shortcut_create_todo">创建待办</string>
+    <string name="shortcut_instant_capture">即时上岛</string>
 </resources>

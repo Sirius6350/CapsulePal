@@ -118,6 +118,9 @@ enum class CapsuleVersion(
 
     val usesBottomBar: Boolean get() = pages.isNotEmpty()
 
+    /** 极客体验：没有待办模块，长按菜单的待办入口需要先切回普通版本。 */
+    val isGeek: Boolean get() = this == GEEK
+
     val showMonitorPage: Boolean get() = CapsulePage.MONITOR in pages
     val showPartnerPage: Boolean get() = CapsulePage.PARTNER in pages
     val showPlansPage: Boolean get() = CapsulePage.PLANS in pages

@@ -8,13 +8,4 @@
         <item name="android:windowLightNavigationBar">true</item>
         <item name="android:windowNoTitle">true</item>
     </style>
-
-    <!-- 桌面组件「即时待办入口」：透明底 + 居中的输入弹窗 -->
-    <style name="Theme.CapsulePal.Capture" parent="Theme.CapsulePal">
-        <item name="android:windowIsTranslucent">true</item>
-        <item name="android:windowBackground">@android:color/transparent</item>
-        <item name="android:backgroundDimAmount">0.45</item>
-        <item name="android:windowContentOverlay">@null</item>
-        <item name="android:windowAnimationStyle">@null</item>
-    </style>
 </resources>

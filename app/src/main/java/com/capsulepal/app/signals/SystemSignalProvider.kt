@@ -85,6 +85,9 @@ class SystemSignalProvider(
     /** 有启用中的 WiFi 规则时注册系统级网络唤醒，进程被回收也能拉起判断。 */
     fun setWifiWakeEnabled(enabled: Boolean) = wifi.setWakeEnabled(enabled)
 
+    /** 回到前台时立刻核对一次当前 WiFi：不依赖系统回调是否被 ROM 吞掉。 */
+    fun checkWifiNow() = wifi.checkNow()
+
     /** 后台唤醒广播到达：返回这次连接是否还需要补发提醒。 */
     fun claimWifiWake(ssid: String?, adoptWhenUnreadable: Boolean): Boolean =
         wifi.claimWakeConnection(ssid, adoptWhenUnreadable)

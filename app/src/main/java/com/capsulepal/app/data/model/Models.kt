@@ -328,6 +328,8 @@ data class AppSettings(
     val hideFinishedAfterDay: Boolean = true,
     /** 当前版本；老用户升级后默认完整本体版。 */
     val version: CapsuleVersion = CapsuleVersion.FULL,
+    /** 最近一次用过的非极客版本；极客版下创建待办 / 即时上岛时切回这里。 */
+    val lastNonGeekVersion: CapsuleVersion = CapsuleVersion.FULL,
     /** 极客版独立指标悬浮窗的不透明度（10–100%）。 */
     val metricOverlayEnabled: Boolean = false,
     val metricOverlayAlphaPercent: Int = 80,

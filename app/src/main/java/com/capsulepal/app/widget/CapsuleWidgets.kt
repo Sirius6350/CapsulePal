@@ -61,10 +61,20 @@ object CapsuleWidgets {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val lastRunAt = AtomicLong(0L)
 
-    fun requestUpdate(context: Context, minIntervalMillis: Long = MIN_INTERVAL_MILLIS) {
+    /**
+     * 请求刷新。
+     *
+     * [force] 用于待办这类“用户刚改完就必须立刻看到”的数据，跳过节流；
+     * 电量这类每秒都会变的读数仍然走节流，避免反复重建 Bitmap。
+     */
+    fun requestUpdate(
+        context: Context,
+        minIntervalMillis: Long = MIN_INTERVAL_MILLIS,
+        force: Boolean = false
+    ) {
         val appContext = context.applicationContext
         val now = System.currentTimeMillis()
-        if (now - lastRunAt.get() < minIntervalMillis) return
+        if (!force && now - lastRunAt.get() < minIntervalMillis) return
         lastRunAt.set(now)
         scope.launch { runCatching { updateAll(appContext) } }
     }
@@ -437,9 +447,19 @@ object CapsuleWidgets {
         )
     }
 
+    /**
+     * 即时上岛入口：直接拉起应用并在应用内弹窗。
+     *
+     * 以前用透明 Activity 承载，冷启动时窗口会先黑一帧；走 MainActivity 后，
+     * 输入框由 Compose 对话框绘制，不会再出现黑底抽搐。
+     */
     private fun captureIntent(context: Context, requestCode: Int): PendingIntent {
-        val intent = Intent(context, InstantTodoCaptureActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        val intent = Intent(context, MainActivity::class.java).apply {
+            action = MainActivity.ACTION_INSTANT_CAPTURE
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                Intent.FLAG_ACTIVITY_SINGLE_TOP
+            data = Uri.parse("capsulepal://widget/instant-capture")
         }
         return PendingIntent.getActivity(
             context,

@@ -28,6 +28,14 @@
     <!-- 读取 WiFi SSID（Android 12+ 必需）：只在本地内存中匹配规则 -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <!-- 后台读 WiFi 名（部分 ROM 不给「附近的设备」时，只能靠「始终允许」的定位）。 -->
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+    <!-- Android 13+ 读 SSID 的独立权限：不申请定位也能在后台读到网络名，
+         声明 neverForLocation 表示不借此推断位置 -->
+    <uses-permission
+        android:name="android.permission.NEARBY_WIFI_DEVICES"
+        android:usesPermissionFlags="neverForLocation"
+        tools:targetApi="33" />
     <!-- 使用情况访问：检测“打开指定应用”，仅本地读取 -->
     <uses-permission
         android:name="android.permission.PACKAGE_USAGE_STATS"
@@ -70,6 +78,10 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- 长按应用图标：创建待办 / 即时上岛 -->
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
         </activity>
 
         <service
@@ -134,14 +146,6 @@
                 <action android:name="android.service.notification.NotificationListenerService" />
             </intent-filter>
         </service>
-
-        <!-- 桌面组件「即时待办入口」：透明底输入弹窗 -->
-        <activity
-            android:name=".widget.InstantTodoCaptureActivity"
-            android:excludeFromRecents="true"
-            android:exported="false"
-            android:launchMode="singleTop"
-            android:theme="@style/Theme.CapsulePal.Capture" />
 
         <receiver
             android:name=".widget.MetricWidgetProvider"

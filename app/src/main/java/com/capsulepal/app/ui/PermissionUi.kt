@@ -67,7 +67,8 @@ fun readPermissionState(context: Context): PermissionState = PermissionState(
     notificationListener = NotificationManagerCompat
         .getEnabledListenerPackages(context)
         .contains(context.packageName),
-    location = granted(context, Manifest.permission.ACCESS_FINE_LOCATION),
+    // 后台也要能读 WiFi 名称：Android 13+ 依赖「附近的设备」，只有定位会被系统抹掉 SSID。
+    location = com.capsulepal.app.signals.WifiSsidReader.hasSsidPermission(context),
     usageAccess = com.capsulepal.app.signals.UsageAccess.granted(context)
 )
 

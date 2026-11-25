@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 长按应用图标：创建待办 / 即时上岛。动作由 MainActivity 解析。 -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <shortcut
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_todo"
+        android:shortcutId="create_todo"
+        android:shortcutLongLabel="@string/shortcut_create_todo"
+        android:shortcutShortLabel="@string/shortcut_create_todo">
+        <intent
+            android:action="com.capsulepal.app.action.CREATE_TODO"
+            android:targetClass="com.capsulepal.app.MainActivity"
+            android:targetPackage="com.capsulepal.app" />
+        <categories android:name="com.capsulepal.app.shortcut.todo" />
+    </shortcut>
+
+    <shortcut
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_instant"
+        android:shortcutId="instant_capture"
+        android:shortcutLongLabel="@string/shortcut_instant_capture"
+        android:shortcutShortLabel="@string/shortcut_instant_capture">
+        <intent
+            android:action="com.capsulepal.app.action.INSTANT_CAPTURE"
+            android:targetClass="com.capsulepal.app.MainActivity"
+            android:targetPackage="com.capsulepal.app" />
+        <categories android:name="com.capsulepal.app.shortcut.instant" />
+    </shortcut>
+</shortcuts>
