@@ -66,17 +66,34 @@ class AlarmScheduler(private val context: Context) {
         buckets.active.take(MAX_ACTIVE_TASKS).forEach { scheduleTask(it) }
         buckets.preactive.take(MAX_PREACTIVE_TASKS).forEach { task ->
             schedulePoint(task.id, AlarmPoint.TASK_START, task.startMillis, exact = false)
+            // 明天及一周内的任务也要排准备提醒，否则准备窗口完全没有闹钟。
+            if (task.prepareMinutes > 0) {
+                schedulePoint(task.id, AlarmPoint.PREPARE_START, task.prepareStartMillis, exact = false)
+            }
         }
         scheduleDailyWake()
     }
 
     /** 每天 00:05 唤醒一次：重排闹钟，把新进入窗口的沉睡待办纳入。 */
     fun scheduleDailyWake() {
-        alarmManager?.setAndAllowWhileIdle(
-            AlarmManager.RTC_WAKEUP,
-            nextDailyWakeAt(),
-            dailyWakePendingIntent()
-        )
+        val manager = alarmManager ?: return
+        val triggerAt = nextDailyWakeAt()
+        runCatching {
+            // 跨天升级靠这一发：有精确闹钟权限时优先精确，避免早上才补排。
+            if (manager.canScheduleExactAlarms()) {
+                manager.setExactAndAllowWhileIdle(
+                    AlarmManager.RTC_WAKEUP,
+                    triggerAt,
+                    dailyWakePendingIntent()
+                )
+            } else {
+                manager.setAndAllowWhileIdle(
+                    AlarmManager.RTC_WAKEUP,
+                    triggerAt,
+                    dailyWakePendingIntent()
+                )
+            }
+        }
     }
 
     private fun nextDailyWakeAt(): Long {
@@ -148,17 +165,46 @@ class AlarmScheduler(private val context: Context) {
 
     fun schedulePoint(taskId: Long, point: AlarmPoint, triggerAt: Long, exact: Boolean) {
         if (triggerAt <= System.currentTimeMillis()) return
-        setAlarm(triggerAt, taskPendingIntent(taskId, point), exact)
+        setAlarm(triggerAt, taskPendingIntent(taskId, point), exact, point)
     }
 
-    private fun setAlarm(triggerAt: Long, pendingIntent: PendingIntent, exact: Boolean) {
+    private fun setAlarm(
+        triggerAt: Long,
+        pendingIntent: PendingIntent,
+        exact: Boolean,
+        point: AlarmPoint? = null
+    ) {
         val manager = alarmManager ?: return
         // 闹钟配额用尽时系统会抛 IllegalStateException；单个闹钟失败不能拖垮整个应用。
         runCatching {
-            if (exact && manager.canScheduleExactAlarms()) {
-                manager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent)
-            } else {
-                manager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent)
+            val canExact = manager.canScheduleExactAlarms()
+            // 准备 / 开始是用户能直接感知的节点。部分国产 ROM 即使给了精确闹钟权限，
+            // 仍会把 setExactAndAllowWhileIdle 对齐批量唤醒（实测晚 1 分钟以上）；
+            // setAlarmClock 是系统最高优先级的闹钟通道，不会被省电策略延后，
+            // 因此这两个节点一律走“闹钟式”调度（代价是状态栏出现闹钟图标）。
+            val criticalPoint = exact && point != null && point != AlarmPoint.TASK_END
+            if (criticalPoint) {
+                val ok = runCatching {
+                    manager.setAlarmClock(
+                        AlarmManager.AlarmClockInfo(triggerAt, null),
+                        pendingIntent
+                    )
+                    true
+                }.getOrDefault(false)
+                if (ok) return
+            }
+            when {
+                exact && canExact ->
+                    manager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent)
+                // 精确闹钟权限缺失时，准备/开始这类用户可见的节点改用“闹钟式”调度兜底：
+                // 无需权限、Doze 下也能准点，代价是状态栏会出现闹钟图标。
+                !canExact && point != null && point != AlarmPoint.TASK_END ->
+                    manager.setAlarmClock(
+                        AlarmManager.AlarmClockInfo(triggerAt, null),
+                        pendingIntent
+                    )
+                else ->
+                    manager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent)
             }
         }
     }

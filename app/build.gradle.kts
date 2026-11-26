@@ -23,8 +23,8 @@ android {
         applicationId = "com.capsulepal.app"
         minSdk = 31
         targetSdk = 36
-        versionCode = 141
-        versionName = "1.2.1"
+        versionCode = 145
+        versionName = "1.3.0"
         vectorDrawables { useSupportLibrary = true }
     }
 

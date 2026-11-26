@@ -1,6 +1,7 @@
 package com.capsulepal.app
 
 import android.content.Context
+import android.os.PowerManager
 import com.capsulepal.app.data.db.CapsuleDatabase
 import com.capsulepal.app.data.backup.BackupKind
 import com.capsulepal.app.data.backup.BackupRepository
@@ -167,6 +168,12 @@ class AppContainer(context: Context) {
     /** 充电时进程内的 1 秒刷新兜底，服务拉不起来时也能实时更新功率。 */
     private var chargingTickerJob: Job? = null
 
+    /** 进程存活时按“时间边界”精确刷新上岛，不依赖系统闹钟是否准时。 */
+    private var boundaryTickerJob: Job? = null
+
+    /** 边界临近时临时持有，保证协程定时不会被 Doze 挂起。 */
+    private var boundaryWakeLock: PowerManager.WakeLock? = null
+
     private val _exactAlarmAvailable = MutableStateFlow(true)
     val exactAlarmAvailable: StateFlow<Boolean> = _exactAlarmAvailable
 
@@ -187,6 +194,7 @@ class AppContainer(context: Context) {
             sweepFinishedTasks(refresh = false)
             val open = taskRepository.openTasks().filter { settings.version.isTaskVisible(it) }
             scheduler.reschedule(open)
+            startBoundaryTicker()
             refreshCalendarNow()
             rescheduleCalendarWatch()
             LiveUpdateService.refresh(appContext)
@@ -237,6 +245,71 @@ class AppContainer(context: Context) {
     private fun stopChargingTicker() {
         chargingTickerJob?.cancel()
         chargingTickerJob = null
+    }
+
+    /**
+     * 时间边界定时器：进程活着时，到下一个“准备 / 开始 / 结束”时刻立刻刷新一次上岛。
+     * 岛本身是时间驱动的，只要被触发就会显示；这样即使系统闹钟晚到或不触发，
+     * 只要进程还在（后台保活 / 悬浮点常驻），上岛也能准点。
+     * 边界很远时只睡不刷新，避免无谓拉起前台服务；Doze 下协程不跑，几乎不耗电。
+     */
+    private fun startBoundaryTicker() {
+        boundaryTickerJob?.cancel()
+        boundaryTickerJob = appScope.launch {
+            while (true) {
+                val now = System.currentTimeMillis()
+                val next = nextBoundaryAtMillis()
+                val remaining = next?.let { it - now }
+                if (remaining != null && remaining <= CRITICAL_BOUNDARY_MILLIS) {
+                    // 边界进入临界窗口：主动持锁把 CPU 撑到边界。
+                    // 系统把闹钟批量延后 1~3 分钟时，进程内的定时刷新仍能准点发出。
+                    acquireBoundaryWakeLock(remaining + BOUNDARY_WAKE_LOCK_EXTRA_MILLIS)
+                    try {
+                        delay(remaining.coerceAtLeast(0L))
+                        runCatching { LiveUpdateService.refresh(appContext) }
+                    } finally {
+                        releaseBoundaryWakeLock()
+                    }
+                } else {
+                    // 离边界还远：分段睡，进入临界窗口后再持锁，避免长时间耗电。
+                    val untilCritical = if (remaining == null) {
+                        BOUNDARY_IDLE_MILLIS
+                    } else {
+                        remaining - CRITICAL_BOUNDARY_MILLIS
+                    }
+                    delay(untilCritical.coerceIn(1_000L, BOUNDARY_IDLE_MILLIS))
+                }
+            }
+        }
+    }
+
+    private fun acquireBoundaryWakeLock(timeoutMillis: Long) {
+        runCatching {
+            releaseBoundaryWakeLock()
+            val manager = appContext.getSystemService(PowerManager::class.java) ?: return
+            boundaryWakeLock = manager
+                .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "CapsulePal:boundary")
+                .apply {
+                    setReferenceCounted(false)
+                    acquire(timeoutMillis.coerceIn(1_000L, BOUNDARY_WAKE_LOCK_MAX_MILLIS))
+                }
+        }
+    }
+
+    private fun releaseBoundaryWakeLock() {
+        runCatching { boundaryWakeLock?.let { if (it.isHeld) it.release() } }
+        boundaryWakeLock = null
+    }
+
+    private suspend fun nextBoundaryAtMillis(): Long? {
+        val now = System.currentTimeMillis()
+        val version = settingsRepository.settings.first().version
+        return taskRepository.openTasks()
+            .filter { version.isTaskVisible(it) }
+            .asSequence()
+            .flatMap { sequenceOf(it.prepareStartMillis, it.startMillis, it.endMillis) }
+            .filter { it > now }
+            .minOrNull()
     }
 
     /** 创建即时待办：只写内存；已有未完成时返回 false。 */
@@ -297,6 +370,8 @@ class AppContainer(context: Context) {
             appScope.launch {
                 sweepFinishedTasks()
                 refreshCalendarNow()
+                // 进程可能长期保活，跨天后闹钟不会自动升级；回到前台补一次重排。
+                rescheduleVisibleTasks()
             }
             // 回到前台时补一次上岛刷新：充电岛被系统收掉后能在这里恢复。
             LiveUpdateService.refresh(appContext)
@@ -641,10 +716,38 @@ class AppContainer(context: Context) {
         LiveUpdateService.refresh(appContext)
     }
 
-    suspend fun handleAlarm(taskId: Long, point: AlarmPoint) {
+    suspend fun handleAlarm(
+        taskId: Long,
+        point: AlarmPoint,
+        receivedAt: Long = System.currentTimeMillis()
+    ) {
         val now = System.currentTimeMillis()
         val settings = settingsRepository.settings.first()
         val task = taskRepository.task(taskId)
+        // 闹钟晚到时留痕：receivedAt 是系统投递瞬间，now 是协程真正开跑的时间，
+        // 两者分开记录才能判断是“系统晚到”还是“唤醒后处理慢”。
+        if (task != null) {
+            val expected = when (point) {
+                AlarmPoint.PREPARE_START -> task.prepareStartMillis
+                AlarmPoint.TASK_START -> task.startMillis
+                AlarmPoint.TASK_END -> task.endMillis
+            }
+            val deliveryLate = receivedAt - expected
+            val processLate = now - receivedAt
+            when {
+                deliveryLate > LATE_ALARM_THRESHOLD_MILLIS -> ReminderTrace.record(
+                    task.title.ifBlank { "待办" },
+                    "闹钟晚到 ${deliveryLate / 60_000} 分 ${deliveryLate / 1_000 % 60} 秒" +
+                        "（系统投递，精确闹钟${if (scheduler.canScheduleExact()) "已开启" else "未开启"}）",
+                    false
+                )
+                processLate > PROCESS_LATE_THRESHOLD_MILLIS -> ReminderTrace.record(
+                    task.title.ifBlank { "待办" },
+                    "闹钟准时，唤醒后处理延迟 ${processLate / 1_000} 秒",
+                    false
+                )
+            }
+        }
         // 版本切换后还可能收到旧闹钟：隐藏模块直接撤销，不改状态、不上岛。
         if (task != null && !settings.version.isTaskVisible(task)) {
             scheduler.cancelTask(taskId)
@@ -661,11 +764,14 @@ class AppContainer(context: Context) {
                     ) {
                         taskRepository.setStatus(task.id, TaskStatus.PREPARE_WINDOW)
                     }
+                    clearAcknowledgedIfNeeded(taskId)
                 }
                 AlarmPoint.TASK_START -> {
                     if (task.status == TaskStatus.IDLE || task.status == TaskStatus.PREPARE_WINDOW) {
                         taskRepository.setStatus(task.id, TaskStatus.IN_PROGRESS)
                     }
+                    // “收到”只压住上一次提醒；真正开始时重新上岛，避免被充电岛顶掉后一直不出现。
+                    clearAcknowledgedIfNeeded(taskId)
                 }
                 AlarmPoint.TASK_END -> {
                     sweepFinishedTasks(refresh = false)
@@ -679,6 +785,20 @@ class AppContainer(context: Context) {
 
         notifications.cancelReminder(taskId)
         LiveUpdateService.refresh(appContext)
+        if (task != null && task.isOpen) {
+            val stage = when (point) {
+                AlarmPoint.PREPARE_START -> "准备"
+                AlarmPoint.TASK_START -> "开始"
+                AlarmPoint.TASK_END -> "结束"
+            }
+            ReminderTrace.record(task.title.ifBlank { "待办" }, "已按「$stage」节点刷新上岛", true)
+        }
+    }
+
+    private suspend fun clearAcknowledgedIfNeeded(taskId: Long) {
+        if (settingsRepository.settings.first().acknowledgedTaskId == taskId) {
+            settingsRepository.clearAcknowledgedTask(taskId)
+        }
     }
 
     suspend fun refreshAfterBoot() {
@@ -1089,5 +1209,23 @@ class AppContainer(context: Context) {
         /** 网络唤醒后补读 SSID 的次数与间隔：进程刚拉起时名称常常还读不到。 */
         const val WAKE_SSID_RETRIES = 2
         const val WAKE_SSID_RETRY_DELAY_MILLIS = 600L
+
+        /** 边界很远/没有边界时的最长休眠；醒来只重算，不刷新。 */
+        const val BOUNDARY_IDLE_MILLIS = 15 * 60_000L
+
+        /** 距边界多久开始持唤醒锁：覆盖系统把闹钟延后 1~3 分钟的情况。 */
+        const val CRITICAL_BOUNDARY_MILLIS = 5 * 60_000L
+
+        /** 唤醒锁在边界之后多留一会儿，确保刷新与通知投递完成。 */
+        const val BOUNDARY_WAKE_LOCK_EXTRA_MILLIS = 2 * 60_000L
+
+        /** 单次唤醒锁上限，避免异常路径长时间耗电。 */
+        const val BOUNDARY_WAKE_LOCK_MAX_MILLIS = 8 * 60_000L
+
+        /** 闹钟比计划时刻晚超过这么久就记一条诊断。 */
+        const val LATE_ALARM_THRESHOLD_MILLIS = 60_000L
+
+        /** 闹钟准时但唤醒后处理耗时超过这么久，也记一条，区分“系统晚到”与“处理慢”。 */
+        const val PROCESS_LATE_THRESHOLD_MILLIS = 10_000L
     }
 }
